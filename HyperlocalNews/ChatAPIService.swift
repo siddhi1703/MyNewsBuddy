@@ -283,24 +283,15 @@ struct ChatAPIService {
 
         var request = URLRequest(url: baseURL.appendingPathComponent("ask"))
         request.httpMethod = "POST"
-        request.timeoutInterval = 30
+        // Render Free can take 50 seconds or more to wake after inactivity.
+        request.timeoutInterval = 75
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         request.httpBody = try encoder.encode(body)
 
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await URLSession.shared.data(for: request)
-        } catch {
-            throw ChatAPIError.connectionFailed
-        }
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ChatAPIError.invalidResponse
-        }
+        let (data, httpResponse) = try await sendWithColdStartRetry(request)
 
         guard (200...299).contains(httpResponse.statusCode) else {
             let detail = (try? JSONDecoder().decode(ErrorResponse.self, from: data).detail)
@@ -315,6 +306,40 @@ struct ChatAPIService {
         } catch {
             throw ChatAPIError.invalidResponse
         }
+    }
+
+    private func sendWithColdStartRetry(
+        _ request: URLRequest
+    ) async throws -> (Data, HTTPURLResponse) {
+        let isRenderFreeHost = request.url?.host?.hasSuffix(".onrender.com") == true
+        let transientStatusCodes: Set<Int> = isRenderFreeHost
+            ? [404, 502, 503, 504]
+            : [502, 503, 504]
+
+        for attempt in 0..<3 {
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw ChatAPIError.invalidResponse
+                }
+
+                if attempt < 2,
+                   transientStatusCodes.contains(httpResponse.statusCode) {
+                    try await Task.sleep(nanoseconds: UInt64(attempt + 1) * 2_000_000_000)
+                    continue
+                }
+                return (data, httpResponse)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                if attempt == 2 {
+                    throw ChatAPIError.connectionFailed
+                }
+                try await Task.sleep(nanoseconds: UInt64(attempt + 1) * 2_000_000_000)
+            }
+        }
+
+        throw ChatAPIError.connectionFailed
     }
 
     private func weatherEvidence(from weather: WeatherSnapshot) -> Evidence {
