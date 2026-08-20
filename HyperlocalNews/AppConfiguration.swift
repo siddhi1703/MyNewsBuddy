@@ -6,9 +6,9 @@ enum AppConfiguration {
     static let supabaseURL = "https://rajxtpjbwhcilvwyvrkz.supabase.co"
     static let supabasePublishableKey = "sb_publishable_LYt5UDCkuktF5D7chsiWIA_AQanjNQT"
 
-    // The simulator reaches the locally running FastAPI server through localhost.
-    // Before distributing the app, replace this with the backend's HTTPS URL.
-    static let chatAPIBaseURL = URL(string: "http://localhost:8000")
+    // Public FastAPI backend hosted on Render. The Free instance can take about
+    // a minute to wake after a period without traffic.
+    static let chatAPIBaseURL = URL(string: "https://mynewsbuddy-api.onrender.com")
 
     static var isSupabaseConfigured: Bool {
         guard
