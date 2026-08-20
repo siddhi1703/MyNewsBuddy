@@ -901,7 +901,6 @@ private struct ChatView: View {
     private let chatService = ChatAPIService()
     private let historyService = ChatHistoryService()
     private let transitService = MBTAService()
-    private let fastAnswerService = FastTrustedAnswerService()
     private let exampleQuestions = [
         "Will it rain?",
         "How windy is it?",
@@ -1089,7 +1088,6 @@ private struct ChatView: View {
         guard !submittedQuestion.isEmpty else { return }
 
         let conversationContext = messages
-            .filter { $0.role == .user || $0.state != nil }
             .suffix(12)
             .map {
                 ChatAPIHistoryMessage(
@@ -1213,18 +1211,18 @@ private struct ChatView: View {
                     if asksAboutTransitStatus {
                         do {
                             let alerts = try await transitService.alerts(for: submittedQuestion)
-                            if let response = fastAnswerService.answer(
+                            let response = try await chatService.ask(
                                 question: submittedQuestion,
                                 weather: nil,
                                 transit: alerts,
-                                arrivals: nil
-                            ) {
-                                let citation = response.citations.first
-                                answer = response.answer + "\n\nFor the current fastest route, tap below to compare live public-transit options in Apple Maps."
-                                answerState = .cited
-                                source = citation?.title
-                                sourceURL = citation?.url
-                            }
+                                arrivals: nil,
+                                history: conversationContext
+                            )
+                            let citation = response.citations.first
+                            answer = response.answer + "\n\nFor the current fastest route, tap below to compare live public-transit options in Apple Maps."
+                            answerState = response.status == .answered ? .cited : nil
+                            source = citation?.title
+                            sourceURL = citation?.url
                         } catch {
                             answer += "\n\nI found the route, but I couldn’t reach the live MBTA alert feed right now."
                         }
@@ -1351,26 +1349,19 @@ private struct ChatView: View {
 
             do {
                 let response: ChatAPIResponse
-                if let fastResponse = fastAnswerService.answer(
+                response = try await chatService.ask(
                     question: submittedQuestion,
                     weather: trustedWeather,
                     transit: trustedTransit,
-                    arrivals: trustedArrivals
-                ) {
-                    response = fastResponse
-                } else {
-                    response = try await chatService.ask(
-                        question: submittedQuestion,
-                        weather: trustedWeather,
-                        transit: trustedTransit,
-                        arrivals: trustedArrivals,
-                        history: conversationContext
-                    )
-                }
+                    arrivals: trustedArrivals,
+                    history: conversationContext
+                )
                 let answerID = UUID()
                 let citation = response.citations.first
                 let answerState: ChatMessage.AnswerState?
-                if response.outcome == "system_miss" {
+                if response.status == .sourceUnavailable {
+                    answerState = nil
+                } else if response.outcome == "system_miss" {
                     answerState = .serviceUnavailable
                 } else {
                     answerState = switch response.status {
@@ -1380,6 +1371,7 @@ private struct ChatView: View {
                     case .forecastUnavailable: .forecastUnavailable
                     case .conversational: nil
                     case .needsClarification: nil
+                    case .sourceUnavailable: .setup
                     }
                 }
                 let shouldSaveGap = response.outcome == "true_gap"

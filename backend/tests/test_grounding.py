@@ -93,6 +93,27 @@ class GroundingTests(unittest.TestCase):
         self.assertEqual(response.outcome, "out_of_scope")
         self.assertFalse(response.save_for_journalist)
 
+    def test_unconnected_official_source_is_a_system_miss_not_a_gap(self) -> None:
+        request = AskRequest(
+            question="What is Northeastern University tuition for a master's degree?"
+        )
+        model_answer = ModelAnswer(
+            answer=(
+                "I do not have Northeastern University's official tuition source "
+                "connected yet, so I cannot verify the current amount."
+            ),
+            status="source_unavailable",
+            category="other",
+            confidence=0.98,
+            citation_source_ids=[],
+        )
+
+        response = _grounded_response(model_answer, request)
+
+        self.assertEqual(response.status, "source_unavailable")
+        self.assertEqual(response.outcome, "system_miss")
+        self.assertFalse(response.save_for_journalist)
+
     def test_greeting_is_conversational_not_a_gap(self) -> None:
         request = AskRequest(question="Good night")
         model_answer = ModelAnswer(

@@ -18,6 +18,8 @@ An iOS SwiftUI prototype for asking local questions and receiving concise answer
 - Weather-responsive Home screen for sun, cloud, rain, snow, storms, fog, and night
 - Animated neutral weather companion that changes with the local forecast
 - Gemini-generated, friendly local answers grounded in live NWS and MBTA evidence
+- Full Gemini conversation context for follow-up questions; Swift retrieves trusted
+  evidence but does not generate template-based weather or MBTA chat answers
 - FastAPI security boundary so the Gemini key never ships inside the iOS app
 - Clickable Weather.gov citations verified by the backend
 - Honest “I don’t know yet” responses for unsupported local questions
@@ -29,6 +31,12 @@ An iOS SwiftUI prototype for asking local questions and receiving concise answer
 - iOS Chat connected to the FastAPI `/ask` endpoint
 - Per-user Supabase chat history with New Chat, restore, and delete controls
 - Recent conversation context included for natural follow-up questions
+
+Every user and assistant message is stored in the user's private `chat_messages`
+history. Only sufficiently specific, unanswered public-interest questions are
+also stored in `unanswered_questions` for journalist review. Answered weather or
+MBTA questions, personal recommendations, ambiguous questions, and missing-source
+engineering issues are never labeled as journalism gaps.
 
 ## Activate authentication
 

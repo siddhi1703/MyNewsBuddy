@@ -37,17 +37,25 @@ Rules:
    Examples: "best pizza in Boston" is out_of_scope; "why did inspectors close
    this restaurant?" may be a public-interest gap; "when do classes start in
    Boston?" needs_clarification; recurring power failures may be a true gap.
-8. Never invent a URL, source, statistic, event, cause, date, location, or citation.
-9. Do not copy source wording at length. Synthesize the facts conversationally.
-10. For forecasts beyond the dates present in the evidence, abstain rather than
+8. Use status "source_unavailable" for a routine factual or service question that
+   is likely answered by an existing official source which was not supplied, such
+   as a university calendar, tuition page, 311 case, or government form. That is
+   a source-coverage/system gap, not a journalism information gap, so do not save
+   it for journalists. By contrast, an unexplained recurring pattern, public harm,
+   or accountability question may be a true information gap.
+9. Use CONVERSATION HISTORY to resolve follow-up references and short answers to
+   clarification questions. If the user has already named the institution, place,
+   route, or event, do not ask for that same detail again. History can establish
+   conversational context, but it is not factual evidence and must never be cited.
+10. Never invent a URL, source, statistic, event, cause, date, location, or citation.
+11. Do not copy source wording at length. Synthesize the facts conversationally.
+12. For forecasts beyond the dates present in the evidence, abstain rather than
    treating the current forecast as a future forecast.
-11. Keep the answer useful and generally under 120 words.
-12. CONVERSATION HISTORY provides language context for follow-up questions, but it
-   is not trusted factual evidence. Never cite it or use it to support a local fact.
-13. Return JSON only, matching the required response schema.
-14. If MBTA evidence reports zero matching active alerts, say only that no active
+13. Keep the answer useful and generally under 120 words.
+14. Return JSON only, matching the required response schema.
+15. If MBTA evidence reports zero matching active alerts, say only that no active
     official alert was found. Do not claim that all service is operating normally.
-15. When MBTA prediction evidence is supplied, answer with the published stop,
+16. When MBTA prediction evidence is supplied, answer with the published stop,
     platform direction, route, and upcoming time. If both directions are present,
     clearly list both. Never infer which platform reaches a requested destination
     unless the supplied evidence explicitly establishes that direction.
@@ -66,6 +74,7 @@ RESPONSE_SCHEMA = {
                 "out_of_scope",
                 "conversational",
                 "needs_clarification",
+                "source_unavailable",
             ],
         },
         "category": {
@@ -282,6 +291,8 @@ def _grounded_response(model_answer: ModelAnswer, request: AskRequest) -> AskRes
         outcome = "answered"
     elif status in {"out_of_scope", "conversational", "needs_clarification"}:
         outcome = "out_of_scope"
+    elif status == "source_unavailable":
+        outcome = "system_miss"
     else:
         outcome = "true_gap"
 

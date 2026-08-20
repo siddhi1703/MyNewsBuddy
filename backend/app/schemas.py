@@ -9,6 +9,7 @@ AnswerStatus = Literal[
     "out_of_scope",
     "conversational",
     "needs_clarification",
+    "source_unavailable",
 ]
 AnswerOutcome = Literal["answered", "true_gap", "out_of_scope", "system_miss"]
 QuestionCategory = Literal[
