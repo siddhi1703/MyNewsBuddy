@@ -77,6 +77,23 @@ class GroundingTests(unittest.TestCase):
         self.assertEqual(response.outcome, "out_of_scope")
         self.assertFalse(response.save_for_journalist)
 
+    def test_greeting_is_conversational_not_a_gap(self) -> None:
+        request = AskRequest(question="Good night")
+        model_answer = ModelAnswer(
+            answer="Good night! I’ll be here when you need a local update.",
+            status="conversational",
+            category="other",
+            confidence=1,
+            citation_source_ids=[],
+        )
+
+        response = _grounded_response(model_answer, request)
+
+        self.assertEqual(response.status, "conversational")
+        self.assertEqual(response.outcome, "out_of_scope")
+        self.assertFalse(response.save_for_journalist)
+        self.assertEqual(response.citations, [])
+
     def test_health_reports_missing_key_without_exposing_secrets(self) -> None:
         response = TestClient(app).get("/health")
 

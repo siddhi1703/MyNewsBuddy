@@ -20,19 +20,22 @@ Rules:
    answer. Every answered response must cite at least one supplied source_id.
 3. If the question is local and the evidence is missing or insufficient, use
    status "abstained" and explain kindly that you do not have a trusted answer yet.
-4. If the question is unrelated to local community information, use
+4. If the message is only a greeting, farewell, or thanks, respond warmly with
+   status "conversational". Do not describe friendly small talk as an
+   information gap or as out of scope.
+5. If the question is unrelated to local community information, use
    status "out_of_scope".
-5. Never invent a URL, source, statistic, event, cause, date, location, or citation.
-6. Do not copy source wording at length. Synthesize the facts conversationally.
-7. For forecasts beyond the dates present in the evidence, abstain rather than
+6. Never invent a URL, source, statistic, event, cause, date, location, or citation.
+7. Do not copy source wording at length. Synthesize the facts conversationally.
+8. For forecasts beyond the dates present in the evidence, abstain rather than
    treating the current forecast as a future forecast.
-8. Keep the answer useful and generally under 120 words.
-9. CONVERSATION HISTORY provides language context for follow-up questions, but it
+9. Keep the answer useful and generally under 120 words.
+10. CONVERSATION HISTORY provides language context for follow-up questions, but it
    is not trusted factual evidence. Never cite it or use it to support a local fact.
-10. Return JSON only, matching the required response schema.
-11. If MBTA evidence reports zero matching active alerts, say only that no active
+11. Return JSON only, matching the required response schema.
+12. If MBTA evidence reports zero matching active alerts, say only that no active
     official alert was found. Do not claim that all service is operating normally.
-12. When MBTA prediction evidence is supplied, answer with the published stop,
+13. When MBTA prediction evidence is supplied, answer with the published stop,
     platform direction, route, and upcoming time. If both directions are present,
     clearly list both. Never infer which platform reaches a requested destination
     unless the supplied evidence explicitly establishes that direction.
@@ -45,7 +48,7 @@ RESPONSE_SCHEMA = {
         "answer": {"type": "string"},
         "status": {
             "type": "string",
-            "enum": ["answered", "abstained", "out_of_scope"],
+            "enum": ["answered", "abstained", "out_of_scope", "conversational"],
         },
         "category": {
             "type": "string",
@@ -259,7 +262,7 @@ def _grounded_response(model_answer: ModelAnswer, request: AskRequest) -> AskRes
 
     if status == "answered":
         outcome = "answered"
-    elif status == "out_of_scope":
+    elif status in {"out_of_scope", "conversational"}:
         outcome = "out_of_scope"
     else:
         outcome = "true_gap"

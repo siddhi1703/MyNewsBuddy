@@ -6,6 +6,7 @@ struct ChatAPIResponse: Decodable {
         case abstained
         case outOfScope = "out_of_scope"
         case forecastUnavailable = "forecast_unavailable"
+        case conversational
     }
 
     struct Citation: Decodable {

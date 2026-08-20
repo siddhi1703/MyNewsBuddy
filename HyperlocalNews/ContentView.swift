@@ -1369,7 +1369,7 @@ private struct ChatView: View {
                 }
                 let answerID = UUID()
                 let citation = response.citations.first
-                let answerState: ChatMessage.AnswerState
+                let answerState: ChatMessage.AnswerState?
                 if response.outcome == "system_miss" {
                     answerState = .serviceUnavailable
                 } else {
@@ -1378,6 +1378,7 @@ private struct ChatView: View {
                     case .abstained: .abstained
                     case .outOfScope: .outOfScope
                     case .forecastUnavailable: .forecastUnavailable
+                    case .conversational: nil
                     }
                 }
                 let shouldSaveGap = response.outcome == "true_gap"
