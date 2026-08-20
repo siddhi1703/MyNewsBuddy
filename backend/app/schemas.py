@@ -3,7 +3,13 @@ from typing import Literal
 from pydantic import BaseModel, Field, HttpUrl
 
 
-AnswerStatus = Literal["answered", "abstained", "out_of_scope", "conversational"]
+AnswerStatus = Literal[
+    "answered",
+    "abstained",
+    "out_of_scope",
+    "conversational",
+    "needs_clarification",
+]
 AnswerOutcome = Literal["answered", "true_gap", "out_of_scope", "system_miss"]
 QuestionCategory = Literal[
     "weather",

@@ -1379,6 +1379,7 @@ private struct ChatView: View {
                     case .outOfScope: .outOfScope
                     case .forecastUnavailable: .forecastUnavailable
                     case .conversational: nil
+                    case .needsClarification: nil
                     }
                 }
                 let shouldSaveGap = response.outcome == "true_gap"

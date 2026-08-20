@@ -18,8 +18,9 @@ Rules:
    events, public safety, housing, or other local facts.
 2. Use status "answered" only when the supplied evidence directly supports the
    answer. Every answered response must cite at least one supplied source_id.
-3. If the question is local and the evidence is missing or insufficient, use
-   status "abstained" and explain kindly that you do not have a trusted answer yet.
+3. Use status "abstained" only for a sufficiently specific, public-interest local
+   question that trusted sources do not answer. This is a potential journalism
+   information gap, so do not use it merely because a question is ambiguous.
 4. If the message is only a greeting, farewell, or thanks, respond warmly with
    status "conversational". Do not describe friendly small talk as an
    information gap or as out of scope.
@@ -27,17 +28,26 @@ Rules:
    status "out_of_scope". Restaurant rankings, personal preferences, shopping,
    and entertainment recommendations are out of scope even when they mention a
    local city. Do not treat them as journalism information gaps.
-6. Never invent a URL, source, statistic, event, cause, date, location, or citation.
-7. Do not copy source wording at length. Synthesize the facts conversationally.
-8. For forecasts beyond the dates present in the evidence, abstain rather than
+6. If a potentially valid local question is missing an essential detail such as
+   the institution, agency, neighborhood, route, or event, use status
+   "needs_clarification" and ask one concise follow-up question. Do not save an
+   ambiguous question as a journalism gap. Example: for "When do fall classes
+   start in Boston?", ask which school or university.
+7. First classify the user's intent using meaning and context, not keyword matching.
+   Examples: "best pizza in Boston" is out_of_scope; "why did inspectors close
+   this restaurant?" may be a public-interest gap; "when do classes start in
+   Boston?" needs_clarification; recurring power failures may be a true gap.
+8. Never invent a URL, source, statistic, event, cause, date, location, or citation.
+9. Do not copy source wording at length. Synthesize the facts conversationally.
+10. For forecasts beyond the dates present in the evidence, abstain rather than
    treating the current forecast as a future forecast.
-9. Keep the answer useful and generally under 120 words.
-10. CONVERSATION HISTORY provides language context for follow-up questions, but it
+11. Keep the answer useful and generally under 120 words.
+12. CONVERSATION HISTORY provides language context for follow-up questions, but it
    is not trusted factual evidence. Never cite it or use it to support a local fact.
-11. Return JSON only, matching the required response schema.
-12. If MBTA evidence reports zero matching active alerts, say only that no active
+13. Return JSON only, matching the required response schema.
+14. If MBTA evidence reports zero matching active alerts, say only that no active
     official alert was found. Do not claim that all service is operating normally.
-13. When MBTA prediction evidence is supplied, answer with the published stop,
+15. When MBTA prediction evidence is supplied, answer with the published stop,
     platform direction, route, and upcoming time. If both directions are present,
     clearly list both. Never infer which platform reaches a requested destination
     unless the supplied evidence explicitly establishes that direction.
@@ -50,7 +60,13 @@ RESPONSE_SCHEMA = {
         "answer": {"type": "string"},
         "status": {
             "type": "string",
-            "enum": ["answered", "abstained", "out_of_scope", "conversational"],
+            "enum": [
+                "answered",
+                "abstained",
+                "out_of_scope",
+                "conversational",
+                "needs_clarification",
+            ],
         },
         "category": {
             "type": "string",
@@ -100,10 +116,6 @@ class GeminiService:
         return bool(self.api_key)
 
     async def answer(self, request: AskRequest) -> AskResponse:
-        out_of_scope = _obvious_out_of_scope_response(request)
-        if out_of_scope is not None:
-            return out_of_scope
-
         if not self.is_configured:
             raise GeminiServiceError(
                 "GEMINI_API_KEY is not configured on the backend."
@@ -196,62 +208,6 @@ class GeminiService:
         raise last_error or GeminiServiceError("Could not reach Gemini.")
 
 
-def _obvious_out_of_scope_response(request: AskRequest) -> AskResponse | None:
-    """Keep clear consumer recommendations out of the journalism-gap dataset.
-
-    The LLM still classifies nuanced civic questions. This narrow deterministic
-    guard covers the explicit non-news examples in the research taxonomy and
-    prevents model variation from creating false journalist leads.
-    """
-    question = " ".join(request.question.lower().split())
-    recommendation_markers = (
-        "best ",
-        "recommend ",
-        "recommendation",
-        "top-rated",
-        "top rated",
-        "favorite ",
-        "favourite ",
-        "where should i eat",
-        "where should i shop",
-    )
-    consumer_topics = (
-        "pizza",
-        "restaurant",
-        "food",
-        "coffee",
-        "cafe",
-        "bar ",
-        "shopping",
-        "store",
-        "hotel",
-        "movie",
-        "entertainment",
-        "date night",
-    )
-    if not (
-        any(marker in question for marker in recommendation_markers)
-        and any(topic in question for topic in consumer_topics)
-    ):
-        return None
-
-    return AskResponse(
-        answer=(
-            "That’s a personal recommendation rather than a civic information "
-            "question, so I won’t record it as a journalism gap. I can help with "
-            "local services, public agencies, transportation, housing, safety, "
-            "weather, and other community issues."
-        ),
-        status="out_of_scope",
-        outcome="out_of_scope",
-        category="other",
-        confidence=1,
-        citations=[],
-        evidence_checked=[item.title for item in request.evidence],
-        save_for_journalist=False,
-    )
-
-
 def _parse_model_answer(provider_response: object) -> ModelAnswer:
     """Extract structured JSON from all Gemini text parts.
 
@@ -324,7 +280,7 @@ def _grounded_response(model_answer: ModelAnswer, request: AskRequest) -> AskRes
 
     if status == "answered":
         outcome = "answered"
-    elif status in {"out_of_scope", "conversational"}:
+    elif status in {"out_of_scope", "conversational", "needs_clarification"}:
         outcome = "out_of_scope"
     else:
         outcome = "true_gap"
