@@ -15,7 +15,7 @@ The iOS authentication flow is implemented. Complete this one-time setup to conn
 3. Keep email signup enabled.
 4. Turn **Confirm email** on.
 
-## 3. Make the confirmation email contain a six-digit code
+## 3. Make the confirmation email contain an OTP code
 
 1. Open **Authentication → Email Templates**.
 2. Select **Confirm signup**.
@@ -23,12 +23,17 @@ The iOS authentication flow is implemented. Complete this one-time setup to conn
 
 ```html
 <h2>Verify your Local Companion account</h2>
-<p>Enter this six-digit code in the app:</p>
+<p>Enter this verification code in the app:</p>
 <h1>{{ .Token }}</h1>
 <p>If you did not create this account, you can ignore this email.</p>
 ```
 
-4. Save the template.
+4. Save the template. Supabase may issue a code longer than six digits; the app
+   accepts the 6–10 digit token received in the email.
+
+For password recovery, also open **Reset password** and make sure its body uses
+`{{ .Token }}` rather than only `{{ .ConfirmationURL }}`. The app's recovery
+screen expects the numeric token.
 
 ## 4. Add the public client configuration
 
@@ -50,7 +55,7 @@ Use only the publishable key in the iOS app. Never add a secret key or service-r
 1. Run the app.
 2. Select **Sign Up**.
 3. Enter an email, a phone number with country code, and a strong password.
-4. Retrieve the six-digit code from the email.
+4. Retrieve the verification code from the email.
 5. Enter the code in the app.
 6. Confirm that the Home screen appears.
 7. Open Profile and test **Sign Out** and **Sign In**.
@@ -72,4 +77,9 @@ The Chat screen saves unanswered local questions for later journalist review.
 
 The included row-level security rules allow a signed-in user to create, read, and update only their own questions. Do not disable row-level security.
 
-To test it, ask “Why is the Green Line delayed?” in Chat. The answer should say “I don’t know yet,” followed by **Saved for journalist review**. The new row should then appear in Supabase’s `unanswered_questions` table.
+To test it, ask a local civic question for which none of the connected trusted
+sources has evidence. The honest-abstention response should show **Saved for
+journalist review**, and a row should appear in `unanswered_questions`.
+
+If the base migration was already run before August 19, 2026, also run
+`supabase/migrations/20260819_align_question_length_limit.sql` once.

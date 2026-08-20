@@ -467,7 +467,8 @@ struct TransitMapView: View {
     }
 
     private func useCurrentLocation() {
-        if let coordinate = weatherModel.mapCoordinate {
+        if weatherModel.isUsingCurrentLocation,
+           let coordinate = weatherModel.mapCoordinate {
             Task {
                 await mapModel.loadStops(
                     at: coordinate,
@@ -476,6 +477,8 @@ struct TransitMapView: View {
                 mapModel.originText = "Current location"
             }
         } else {
+            // `mapCoordinate` can represent a manually selected weather city.
+            // Do not mistake that city for the phone's current GPS location.
             waitingForCurrentLocation = true
             weatherModel.useCurrentLocation()
             mapModel.errorMessage = "Finding your current location…"

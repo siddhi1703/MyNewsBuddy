@@ -53,8 +53,13 @@ For a Boston location in Simulator, choose **Features → Location → Custom Lo
 
 ## Activate the AI chat
 
-The iOS Simulator connects to a local FastAPI server. Add a Gemini API key only
-to `backend/.env`, after `GEMINI_API_KEY=`. Never add the key to a Swift file.
+The iOS app is configured to use the hosted FastAPI service at
+`https://mynewsbuddy-api.onrender.com`, so Terminal does not need to stay open.
+Render Free may take about a minute to wake after inactivity; the app retries
+that first request automatically.
+
+For optional local backend development, add a Gemini API key only to
+`backend/.env`, after `GEMINI_API_KEY=`. Never add the key to a Swift file.
 
 In Terminal, from this project folder, run:
 
@@ -64,6 +69,6 @@ source .venv/bin/activate
 uvicorn app.main:app --reload --env-file .env
 ```
 
-Keep that Terminal window running, then press `Command-R` in Xcode. See
-[`backend/README.md`](backend/README.md) for health checks and physical-iPhone
-configuration.
+Temporarily change `chatAPIBaseURL` in `HyperlocalNews/AppConfiguration.swift`
+to `http://127.0.0.1:8000` while using that local server. See
+[`backend/README.md`](backend/README.md) for health checks.

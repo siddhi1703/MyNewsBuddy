@@ -16,7 +16,8 @@ create table if not exists public.chat_messages (
     content text not null check (char_length(content) between 1 and 8000),
     answer_state text check (
         answer_state is null or answer_state in (
-            'setup', 'cited', 'abstained', 'out_of_scope', 'forecast_unavailable'
+            'setup', 'cited', 'abstained', 'out_of_scope', 'forecast_unavailable',
+            'service_unavailable'
         )
     ),
     source_title text check (source_title is null or char_length(source_title) <= 300),

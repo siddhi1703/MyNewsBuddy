@@ -490,13 +490,20 @@ private enum WeatherService {
 
     private static func request<Response: Decodable>(_ url: URL) async throws -> Response {
         var request = URLRequest(url: url)
+        request.timeoutInterval = 20
         request.setValue("application/geo+json", forHTTPHeaderField: "Accept")
         request.setValue(
             "LocalCompanion/1.0 (student hyperlocal news research app)",
             forHTTPHeaderField: "User-Agent"
         )
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw WeatherServiceError.serverUnavailable
+        }
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
             throw WeatherServiceError.serverUnavailable

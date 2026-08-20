@@ -886,6 +886,7 @@ private struct ChatView: View {
     @State private var historyError: String?
     @State private var conversations: [ChatConversation] = []
     @State private var activeConversationID: UUID?
+    @State private var pendingConversationSave: Task<UUID, Error>?
     @State private var selectedCityWeather: WeatherSnapshot?
     @State private var messages = [
         ChatMessage(
@@ -971,7 +972,9 @@ private struct ChatView: View {
                 )
             }
             .task {
+                async let backendWarmup: Void = chatService.warmUp()
                 await refreshConversations()
+                await backendWarmup
             }
         }
     }
@@ -1056,6 +1059,11 @@ private struct ChatView: View {
         HStack(alignment: .bottom, spacing: 10) {
             TextField("Ask about your area…", text: $question, axis: .vertical)
                 .lineLimit(1...4)
+                .onChange(of: question) {
+                    if question.count > 2_000 {
+                        question = String(question.prefix(2_000))
+                    }
+                }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 11)
                 .background(Color(.secondarySystemBackground))
@@ -1089,12 +1097,34 @@ private struct ChatView: View {
                     content: $0.text
                 )
             }
-        let conversationID = activeConversationID
-        let persistenceTask: Task<UUID, Error> = Task {
-            try await historyService.saveUserMessage(
-                conversationID: conversationID,
-                question: submittedQuestion
-            )
+        let persistenceTask: Task<UUID, Error>
+        if let conversationID = activeConversationID {
+            persistenceTask = Task {
+                try await historyService.saveUserMessage(
+                    conversationID: conversationID,
+                    question: submittedQuestion
+                )
+            }
+        } else if let pendingConversationSave {
+            // A quick follow-up can be sent after the answer appears but before
+            // Supabase finishes creating the conversation. Chain that save to
+            // the same conversation instead of creating a duplicate history row.
+            persistenceTask = Task {
+                let conversationID = try await pendingConversationSave.value
+                return try await historyService.saveUserMessage(
+                    conversationID: conversationID,
+                    question: submittedQuestion
+                )
+            }
+        } else {
+            let firstSave = Task {
+                try await historyService.saveUserMessage(
+                    conversationID: nil,
+                    question: submittedQuestion
+                )
+            }
+            pendingConversationSave = firstSave
+            persistenceTask = firstSave
         }
 
         messages.append(
@@ -1568,6 +1598,7 @@ private struct ChatView: View {
     private func startNewChat() {
         guard !isLoading else { return }
         activeConversationID = nil
+        pendingConversationSave = nil
         selectedCityWeather = nil
         question = ""
         messages = [welcomeMessage]
@@ -1608,6 +1639,7 @@ private struct ChatView: View {
                 conversationID: conversation.id
             )
             activeConversationID = conversation.id
+            pendingConversationSave = nil
             selectedCityWeather = nil
             messages = [welcomeMessage] + storedMessages.map(ChatMessage.init(stored:))
             historyError = nil
@@ -1650,6 +1682,9 @@ private struct ChatView: View {
                 )
                 await refreshConversations()
             } catch {
+                if activeConversationID == nil {
+                    pendingConversationSave = nil
+                }
                 historyError = error.localizedDescription
             }
         }

@@ -12,9 +12,11 @@ Run the chat-history migration once before testing New Chat and Chat History.
    - `chat_conversations`
    - `chat_messages`
 
+If the base migration was already run before August 19, 2026, also run
+`supabase/migrations/20260819_allow_service_unavailable_chat_state.sql` once.
+
 The migration enables Row Level Security. Authenticated users can read and
 delete only their own conversations and messages.
 
-After it succeeds, keep the FastAPI server running and press `Command-R` in
-Xcode. Send one message, select the history icon in Chat, and confirm the new
-conversation appears.
+After it succeeds, press `Command-R` in Xcode. Send two related messages, select
+the history icon in Chat, and confirm they appear inside one conversation.

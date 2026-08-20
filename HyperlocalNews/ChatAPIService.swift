@@ -228,7 +228,7 @@ enum ChatAPIError: LocalizedError {
         case .server(_, let detail):
             detail
         case .connectionFailed:
-            "The AI service is not reachable. Start the FastAPI backend, then try again."
+            "The hosted AI service is temporarily unavailable. Please wait a moment and try again."
         }
     }
 }
@@ -251,6 +251,19 @@ struct ChatAPIService {
 
     private struct ErrorResponse: Decodable {
         let detail: String?
+    }
+
+    /// Wake the free hosted service while the user is reading the Chat screen.
+    /// This health request does not call Gemini or consume model quota.
+    func warmUp() async {
+        guard let baseURL = AppConfiguration.chatAPIBaseURL,
+              baseURL.host?.hasSuffix(".onrender.com") == true else {
+            return
+        }
+
+        var request = URLRequest(url: baseURL.appendingPathComponent("health"))
+        request.timeoutInterval = 75
+        _ = try? await sendWithColdStartRetry(request)
     }
 
     func ask(

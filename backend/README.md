@@ -24,6 +24,7 @@ uvicorn app.main:app --reload --env-file .env
 Verify <http://127.0.0.1:8000/health>. The response should show
 `"model_configured": true`.
 
-The local iPhone Simulator connects to `http://127.0.0.1:8000`. A physical
-iPhone needs an HTTPS deployment or the Mac's reachable LAN address for local
-development.
+The checked-in iOS configuration uses the hosted Render service. To test this
+local server, temporarily set `chatAPIBaseURL` in
+`HyperlocalNews/AppConfiguration.swift` to `http://127.0.0.1:8000`. A physical
+iPhone needs the HTTPS deployment or the Mac's reachable LAN address.

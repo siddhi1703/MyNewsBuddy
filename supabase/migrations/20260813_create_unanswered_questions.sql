@@ -3,7 +3,7 @@ create extension if not exists pgcrypto;
 create table if not exists public.unanswered_questions (
     id uuid primary key default gen_random_uuid(),
     user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
-    question text not null check (char_length(question) between 1 and 1000),
+    question text not null check (char_length(question) between 1 and 2000),
     location text not null check (char_length(location) between 1 and 200),
     category text not null default 'pending_review',
     status text not null default 'unanswered'
