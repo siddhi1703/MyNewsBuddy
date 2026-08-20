@@ -1,0 +1,8 @@
+.DS_Store
+DerivedData/
+*.xcuserstate
+xcuserdata/
+backend/.env
+backend/.venv/
+backend/**/__pycache__/
+.pytest_cache/

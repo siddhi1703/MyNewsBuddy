@@ -1,0 +1,29 @@
+# Local Companion FastAPI backend
+
+This backend is the only component allowed to hold the Gemini API key. The iOS
+application sends the user question and already-retrieved trusted evidence to
+`POST /ask`. Gemini writes a friendly response, while the backend enforces that
+an answered response contains at least one valid evidence citation.
+
+## Run locally
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+cp .env.example .env
+```
+
+Replace the placeholder in `.env`, then run:
+
+```bash
+uvicorn app.main:app --reload --env-file .env
+```
+
+Verify <http://127.0.0.1:8000/health>. The response should show
+`"model_configured": true`.
+
+The local iPhone Simulator connects to `http://127.0.0.1:8000`. A physical
+iPhone needs an HTTPS deployment or the Mac's reachable LAN address for local
+development.
