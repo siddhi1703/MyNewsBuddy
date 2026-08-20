@@ -2,7 +2,11 @@ import unittest
 
 from fastapi.testclient import TestClient
 
-from app.gemini import _grounded_response, _parse_model_answer
+from app.gemini import (
+    _grounded_response,
+    _obvious_out_of_scope_response,
+    _parse_model_answer,
+)
 from app.main import app
 from app.schemas import AskRequest, EvidenceItem, ModelAnswer
 
@@ -76,6 +80,26 @@ class GroundingTests(unittest.TestCase):
         self.assertEqual(response.status, "out_of_scope")
         self.assertEqual(response.outcome, "out_of_scope")
         self.assertFalse(response.save_for_journalist)
+
+    def test_restaurant_recommendation_is_never_a_journalism_gap(self) -> None:
+        request = AskRequest(question="What is the best pizza in Boston?")
+
+        response = _obvious_out_of_scope_response(request)
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertEqual(response.status, "out_of_scope")
+        self.assertEqual(response.outcome, "out_of_scope")
+        self.assertFalse(response.save_for_journalist)
+
+    def test_restaurant_accountability_question_is_not_forced_out_of_scope(self) -> None:
+        request = AskRequest(
+            question="Why did Boston close this restaurant for health violations?"
+        )
+
+        response = _obvious_out_of_scope_response(request)
+
+        self.assertIsNone(response)
 
     def test_greeting_is_conversational_not_a_gap(self) -> None:
         request = AskRequest(question="Good night")

@@ -24,7 +24,9 @@ Rules:
    status "conversational". Do not describe friendly small talk as an
    information gap or as out of scope.
 5. If the question is unrelated to local community information, use
-   status "out_of_scope".
+   status "out_of_scope". Restaurant rankings, personal preferences, shopping,
+   and entertainment recommendations are out of scope even when they mention a
+   local city. Do not treat them as journalism information gaps.
 6. Never invent a URL, source, statistic, event, cause, date, location, or citation.
 7. Do not copy source wording at length. Synthesize the facts conversationally.
 8. For forecasts beyond the dates present in the evidence, abstain rather than
@@ -98,6 +100,10 @@ class GeminiService:
         return bool(self.api_key)
 
     async def answer(self, request: AskRequest) -> AskResponse:
+        out_of_scope = _obvious_out_of_scope_response(request)
+        if out_of_scope is not None:
+            return out_of_scope
+
         if not self.is_configured:
             raise GeminiServiceError(
                 "GEMINI_API_KEY is not configured on the backend."
@@ -188,6 +194,62 @@ class GeminiService:
                 raise last_error from error
 
         raise last_error or GeminiServiceError("Could not reach Gemini.")
+
+
+def _obvious_out_of_scope_response(request: AskRequest) -> AskResponse | None:
+    """Keep clear consumer recommendations out of the journalism-gap dataset.
+
+    The LLM still classifies nuanced civic questions. This narrow deterministic
+    guard covers the explicit non-news examples in the research taxonomy and
+    prevents model variation from creating false journalist leads.
+    """
+    question = " ".join(request.question.lower().split())
+    recommendation_markers = (
+        "best ",
+        "recommend ",
+        "recommendation",
+        "top-rated",
+        "top rated",
+        "favorite ",
+        "favourite ",
+        "where should i eat",
+        "where should i shop",
+    )
+    consumer_topics = (
+        "pizza",
+        "restaurant",
+        "food",
+        "coffee",
+        "cafe",
+        "bar ",
+        "shopping",
+        "store",
+        "hotel",
+        "movie",
+        "entertainment",
+        "date night",
+    )
+    if not (
+        any(marker in question for marker in recommendation_markers)
+        and any(topic in question for topic in consumer_topics)
+    ):
+        return None
+
+    return AskResponse(
+        answer=(
+            "That’s a personal recommendation rather than a civic information "
+            "question, so I won’t record it as a journalism gap. I can help with "
+            "local services, public agencies, transportation, housing, safety, "
+            "weather, and other community issues."
+        ),
+        status="out_of_scope",
+        outcome="out_of_scope",
+        category="other",
+        confidence=1,
+        citations=[],
+        evidence_checked=[item.title for item in request.evidence],
+        save_for_journalist=False,
+    )
 
 
 def _parse_model_answer(provider_response: object) -> ModelAnswer:
