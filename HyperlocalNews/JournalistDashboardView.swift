@@ -263,7 +263,12 @@ struct JournalistDashboardView: View {
                                 JournalistClusterDetailView(cluster: cluster)
                             } label: {
                                 JournalistClusterRow(cluster: cluster)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
                             }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Open topic: \(cluster.representativeQuestion)")
+                            .accessibilityHint("Shows the reporting lead, locations, question examples, and timeline")
                         }
                     }
                 }
@@ -337,6 +342,8 @@ private struct JournalistClusterRow: View {
             }
         }
         .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }
 
