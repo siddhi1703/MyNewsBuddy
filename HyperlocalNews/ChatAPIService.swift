@@ -22,6 +22,7 @@ struct ChatAPIResponse: Decodable {
     let category: String
     let confidence: Double
     let citations: [Citation]
+    let evidenceChecked: [String]
 }
 
 struct ChatAPIHistoryMessage: Encodable {

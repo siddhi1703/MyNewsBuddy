@@ -149,6 +149,29 @@ class GroundingTests(unittest.TestCase):
         self.assertFalse(response.json()["save_for_journalist"])
         self.assertIn("system problem", response.json()["answer"])
 
+    def test_long_range_weather_limit_is_not_logged_as_a_gap(self) -> None:
+        response = TestClient(app).post(
+            "/ask",
+            json={"question": "What will Boston weather be after 15 days?"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "source_unavailable")
+        self.assertEqual(response.json()["outcome"], "system_miss")
+        self.assertFalse(response.json()["save_for_journalist"])
+        self.assertIn("forecast limit", response.json()["answer"])
+
+    def test_routine_academic_calendar_question_is_not_a_gap(self) -> None:
+        response = TestClient(app).post(
+            "/ask",
+            json={"question": "When will college classes start for fall 2026?"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "source_unavailable")
+        self.assertEqual(response.json()["outcome"], "system_miss")
+        self.assertFalse(response.json()["save_for_journalist"])
+
     def test_request_accepts_bounded_conversation_context(self) -> None:
         request = AskRequest(
             question="What about tomorrow?",

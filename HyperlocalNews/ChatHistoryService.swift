@@ -6,6 +6,13 @@ struct ChatConversation: Identifiable, Decodable, Equatable {
     let createdAt: String
     let updatedAt: String
 
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+
     var updatedDate: Date? {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -32,6 +39,17 @@ struct StoredChatMessage: Identifiable, Decodable {
     let sourceTitle: String?
     let sourceURL: String?
     let createdAt: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case conversationID = "conversation_id"
+        case role
+        case content
+        case answerState = "answer_state"
+        case sourceTitle = "source_title"
+        case sourceURL = "source_url"
+        case createdAt = "created_at"
+    }
 }
 
 enum ChatHistoryError: LocalizedError {
@@ -233,7 +251,6 @@ actor ChatHistoryService {
         from data: Data
     ) throws -> Response {
         let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
         do {
             return try decoder.decode(type, from: data)
         } catch {

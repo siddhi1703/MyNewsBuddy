@@ -17,6 +17,7 @@
 		110000000000000000000008 /* ChatHistoryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000009 /* ChatHistoryService.swift */; };
 		110000000000000000000009 /* MBTAService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000010 /* MBTAService.swift */; };
 		11000000000000000000000A /* TransitMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000011 /* TransitMapView.swift */; };
+		11000000000000000000000B /* JournalistDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000012 /* JournalistDashboardView.swift */; };
 		110000000000000000000101 /* WeatherMascotSunny.png in Resources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000101 /* WeatherMascotSunny.png */; };
 		110000000000000000000102 /* WeatherMascotCloudy.png in Resources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000102 /* WeatherMascotCloudy.png */; };
 		110000000000000000000103 /* WeatherMascotRainy.png in Resources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000103 /* WeatherMascotRainy.png */; };
@@ -37,6 +38,7 @@
 		120000000000000000000009 /* ChatHistoryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatHistoryService.swift; sourceTree = "<group>"; };
 		120000000000000000000010 /* MBTAService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MBTAService.swift; sourceTree = "<group>"; };
 		120000000000000000000011 /* TransitMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransitMapView.swift; sourceTree = "<group>"; };
+		120000000000000000000012 /* JournalistDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JournalistDashboardView.swift; sourceTree = "<group>"; };
 		120000000000000000000101 /* WeatherMascotSunny.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = WeatherMascotSunny.png; sourceTree = "<group>"; };
 		120000000000000000000102 /* WeatherMascotCloudy.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = WeatherMascotCloudy.png; sourceTree = "<group>"; };
 		120000000000000000000103 /* WeatherMascotRainy.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = WeatherMascotRainy.png; sourceTree = "<group>"; };
@@ -76,6 +78,7 @@
 				120000000000000000000009 /* ChatHistoryService.swift */,
 				120000000000000000000010 /* MBTAService.swift */,
 				120000000000000000000011 /* TransitMapView.swift */,
+				120000000000000000000012 /* JournalistDashboardView.swift */,
 				120000000000000000000002 /* ContentView.swift */,
 				140000000000000000000101 /* Resources */,
 			);
@@ -190,6 +193,7 @@
 				110000000000000000000008 /* ChatHistoryService.swift in Sources */,
 				110000000000000000000009 /* MBTAService.swift in Sources */,
 				11000000000000000000000A /* TransitMapView.swift in Sources */,
+				11000000000000000000000B /* JournalistDashboardView.swift in Sources */,
 				110000000000000000000002 /* ContentView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -308,7 +312,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 79Z5THMDU6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = HyperlocalNews/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Local Companion";
@@ -338,7 +342,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 79Z5THMDU6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = HyperlocalNews/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Local Companion";

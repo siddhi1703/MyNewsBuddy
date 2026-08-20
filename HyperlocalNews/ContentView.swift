@@ -1395,7 +1395,10 @@ private struct ChatView: View {
                         let savedID = try await gapService.logUnansweredQuestion(
                             question: submittedQuestion,
                             location: trustedWeather?.location ?? weather.location,
-                            category: response.category
+                            category: response.category,
+                            confidence: response.confidence,
+                            evidenceChecked: response.evidenceChecked,
+                            assistantResponse: response.answer
                         )
                         updateMessage(answerID) { message in
                             message.remoteQuestionID = savedID
@@ -2237,6 +2240,8 @@ private struct AccountProfileView: View {
 
     @Environment(\.openURL) private var openURL
     @State private var isShowingSignOutConfirmation = false
+    @State private var hasJournalistAccess = false
+    private let journalistService = JournalistGapService()
 
     var body: some View {
         NavigationStack {
@@ -2297,6 +2302,23 @@ private struct AccountProfileView: View {
                         }
                     }
 
+                    if hasJournalistAccess {
+                        Section("Editorial tools") {
+                            NavigationLink {
+                                JournalistDashboardView()
+                            } label: {
+                                ProfileSettingRow(
+                                    symbol: "newspaper.fill",
+                                    color: .purple,
+                                    title: "Journalist Inbox",
+                                    detail: "Review clustered information gaps",
+                                    showsChevron: true
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
                     Section {
                         Button(role: .destructive) {
                             isShowingSignOutConfirmation = true
@@ -2316,6 +2338,9 @@ private struct AccountProfileView: View {
             }
             .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.large)
+            .task {
+                hasJournalistAccess = await journalistService.hasJournalistAccess()
+            }
             .confirmationDialog(
                 "Sign out of Local Companion?",
                 isPresented: $isShowingSignOutConfirmation,

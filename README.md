@@ -24,6 +24,12 @@ An iOS SwiftUI prototype for asking local questions and receiving concise answer
 - Clickable Weather.gov citations verified by the backend
 - Honest “I don’t know yet” responses for unsupported local questions
 - Supabase unanswered-question logging for journalist review
+- Automatic lightweight clustering of similar information-gap questions
+- Research audit data recording confidence, checked sources, and the abstention
+- Role-protected Journalist Inbox with cluster volume, asker counts, locations,
+  example questions, and reporting-lead details
+- Research-quality guards that exclude forecast-horizon limits and routine
+  academic-calendar lookups from journalism-gap reporting
 - Saved notification-interest requests for unanswered questions
 - Trusted local source links after an abstention
 - Distinct setup, out-of-scope, and honest-abstention states
@@ -44,6 +50,14 @@ Follow [SUPABASE_SETUP.md](SUPABASE_SETUP.md) to connect the account screens to 
 
 Run [SUPABASE_CHAT_HISTORY_SETUP.md](SUPABASE_CHAT_HISTORY_SETUP.md) once to
 activate saved conversations and the New Chat workflow.
+
+Run [SUPABASE_GAP_CLUSTERING_SETUP.md](SUPABASE_GAP_CLUSTERING_SETUP.md) once to
+activate Box 6 of the research pipeline. This uses explainable PostgreSQL text
+similarity as an MVP baseline; embeddings or BERTopic remain a later evaluation.
+
+Follow [SUPABASE_JOURNALIST_ACCESS.md](SUPABASE_JOURNALIST_ACCESS.md) to grant an
+approved editor access to **Profile → Journalist Inbox**. Community accounts
+cannot read cross-user clusters.
 
 ## Run
 

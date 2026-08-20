@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from datetime import datetime, timezone
 
 import httpx
@@ -125,6 +126,9 @@ class GeminiService:
         return bool(self.api_key)
 
     async def answer(self, request: AskRequest) -> AskResponse:
+        if guarded_response := _research_quality_guardrail(request):
+            return guarded_response
+
         if not self.is_configured:
             raise GeminiServiceError(
                 "GEMINI_API_KEY is not configured on the backend."
@@ -215,6 +219,67 @@ class GeminiService:
                 raise last_error from error
 
         raise last_error or GeminiServiceError("Could not reach Gemini.")
+
+
+def _research_quality_guardrail(request: AskRequest) -> AskResponse | None:
+    """Keep predictable source limits out of the journalism-gap dataset.
+
+    Gemini still performs semantic intent classification and writes grounded
+    answers. These narrow deterministic checks enforce research policy for two
+    routine cases that must never be mislabeled as community reporting leads.
+    """
+    question = request.question.strip()
+    normalized = question.lower()
+
+    weather_terms = ("weather", "forecast", "rain", "snow", "temperature")
+    horizon_match = re.search(
+        r"\b(?:after|in|next|for)\s+(\d{1,3})\s*(day|days|week|weeks|month|months)\b",
+        normalized,
+    )
+    if horizon_match and any(term in normalized for term in weather_terms):
+        amount = int(horizon_match.group(1))
+        unit = horizon_match.group(2)
+        days = amount * (7 if unit.startswith("week") else 30 if unit.startswith("month") else 1)
+        if days > 7:
+            return AskResponse(
+                answer=(
+                    "The National Weather Service forecast connected to this app "
+                    "covers about seven days, so I can’t give you a trustworthy "
+                    f"{amount}-{unit.rstrip('s')} forecast. This is a forecast "
+                    "limit, not a missing community answer."
+                ),
+                status="source_unavailable",
+                outcome="system_miss",
+                category="weather",
+                confidence=1,
+                citations=[],
+                evidence_checked=[item.title for item in request.evidence],
+                save_for_journalist=False,
+            )
+
+    routine_calendar = (
+        re.search(r"\bwhen\b", normalized)
+        and re.search(r"\b(class|classes|semester|term|college|school|university)\b", normalized)
+        and re.search(r"\b(start|starts|begin|begins|open|opens)\b", normalized)
+        and not re.search(r"\bwhy\b|\bcancel|\bclosed\b|\bdelay|\bproblem\b|\bimpact\b", normalized)
+    )
+    if routine_calendar:
+        return AskResponse(
+            answer=(
+                "That date should come from the specific school or university’s "
+                "official academic calendar. That source is not connected yet, "
+                "so I won’t guess or label this as a journalism gap."
+            ),
+            status="source_unavailable",
+            outcome="system_miss",
+            category="events",
+            confidence=1,
+            citations=[],
+            evidence_checked=[item.title for item in request.evidence],
+            save_for_journalist=False,
+        )
+
+    return None
 
 
 def _parse_model_answer(provider_response: object) -> ModelAnswer:

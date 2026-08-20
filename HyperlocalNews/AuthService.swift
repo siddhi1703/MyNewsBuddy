@@ -328,14 +328,20 @@ actor InformationGapService {
     func logUnansweredQuestion(
         question: String,
         location: String,
-        category: String
+        category: String,
+        confidence: Double,
+        evidenceChecked: [String],
+        assistantResponse: String
     ) async throws -> UUID {
         let body = UnansweredQuestionRequest(
             question: question,
             location: location,
             category: category,
             status: "unanswered",
-            notificationRequested: false
+            notificationRequested: false,
+            confidence: confidence,
+            evidenceChecked: evidenceChecked,
+            assistantResponse: assistantResponse
         )
         let data = try await request(
             method: "POST",
@@ -418,6 +424,9 @@ private struct UnansweredQuestionRequest: Encodable {
     let category: String
     let status: String
     let notificationRequested: Bool
+    let confidence: Double
+    let evidenceChecked: [String]
+    let assistantResponse: String
 
     enum CodingKeys: String, CodingKey {
         case question
@@ -425,6 +434,9 @@ private struct UnansweredQuestionRequest: Encodable {
         case category
         case status
         case notificationRequested = "notification_requested"
+        case confidence
+        case evidenceChecked = "evidence_checked"
+        case assistantResponse = "assistant_response"
     }
 }
 
