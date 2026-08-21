@@ -882,9 +882,13 @@ private struct ChatView: View {
     @State private var isLoading = false
     @State private var isShowingTrustedSources = false
     @State private var isShowingHistory = false
+    @State private var isShowingCommunityResponses = false
     @State private var isLoadingHistory = false
+    @State private var isLoadingCommunityResponses = false
     @State private var historyError: String?
+    @State private var communityResponseError: String?
     @State private var conversations: [ChatConversation] = []
+    @State private var communityResponses: [CommunityJournalistResponse] = []
     @State private var activeConversationID: UUID?
     @State private var pendingConversationSave: Task<UUID, Error>?
     @State private var selectedCityWeather: WeatherSnapshot?
@@ -901,6 +905,7 @@ private struct ChatView: View {
     private let chatService = ChatAPIService()
     private let historyService = ChatHistoryService()
     private let transitService = MBTAService()
+    private let communityResponseService = CommunityResponseService()
     private let exampleQuestions = [
         "Will it rain?",
         "How windy is it?",
@@ -942,6 +947,24 @@ private struct ChatView: View {
 
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 12) {
+                        Button {
+                            isShowingCommunityResponses = true
+                            Task { await refreshCommunityResponses() }
+                        } label: {
+                            ZStack(alignment: .topTrailing) {
+                                Image(systemName: "bell.fill")
+                                if unreadCommunityResponseCount > 0 {
+                                    Text("\(min(unreadCommunityResponseCount, 9))")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 15, height: 15)
+                                        .background(.red, in: Circle())
+                                        .offset(x: 7, y: -7)
+                                }
+                            }
+                        }
+                        .accessibilityLabel("Journalist responses")
+
                         Button(action: startNewChat) {
                             Image(systemName: "square.and.pencil")
                         }
@@ -970,9 +993,25 @@ private struct ChatView: View {
                     onNewChat: startNewChat
                 )
             }
+            .sheet(isPresented: $isShowingCommunityResponses) {
+                CommunityResponsesSheet(
+                    responses: communityResponses,
+                    isLoading: isLoadingCommunityResponses,
+                    errorMessage: communityResponseError,
+                    onRefresh: {
+                        Task { await refreshCommunityResponses() }
+                    },
+                    onMarkRead: { response in
+                        Task { await markCommunityResponseRead(response) }
+                    }
+                )
+            }
             .task {
                 async let backendWarmup: Void = chatService.warmUp()
-                await refreshConversations()
+                async let historyRefresh: Void = refreshConversations()
+                async let responseRefresh: Void = refreshCommunityResponses()
+                await historyRefresh
+                await responseRefresh
                 await backendWarmup
             }
         }
@@ -1348,12 +1387,18 @@ private struct ChatView: View {
             }
 
             do {
+                let publishedJournalistAnswers = (
+                    try? await communityResponseService.searchPublishedAnswers(
+                        for: submittedQuestion
+                    )
+                ) ?? []
                 let response: ChatAPIResponse
                 response = try await chatService.ask(
                     question: submittedQuestion,
                     weather: trustedWeather,
                     transit: trustedTransit,
                     arrivals: trustedArrivals,
+                    journalistAnswers: publishedJournalistAnswers,
                     history: conversationContext
                 )
                 let answerID = UUID()
@@ -1449,6 +1494,34 @@ private struct ChatView: View {
             return "Sign in again, then resend the question so it can be saved for journalist review."
         }
         return "Couldn’t save this question for journalist review: \(detail)"
+    }
+
+    private var unreadCommunityResponseCount: Int {
+        communityResponses.lazy.filter(\.isUnread).count
+    }
+
+    @MainActor
+    private func refreshCommunityResponses() async {
+        isLoadingCommunityResponses = true
+        defer { isLoadingCommunityResponses = false }
+        do {
+            communityResponses = try await communityResponseService.notifications()
+            communityResponseError = nil
+        } catch {
+            // Keep chat usable before the optional response-loop migration is
+            // installed; the sheet explains the missing setup when opened.
+            communityResponseError = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func markCommunityResponseRead(_ response: CommunityJournalistResponse) async {
+        do {
+            try await communityResponseService.markRead(response.id)
+            await refreshCommunityResponses()
+        } catch {
+            communityResponseError = error.localizedDescription
+        }
     }
 
     private func needsTransitLocationClarification(_ submittedQuestion: String) -> Bool {
@@ -1716,6 +1789,104 @@ private struct ChatView: View {
                 updateMessage(messageID) { message in
                     message.isRequestingNotification = false
                     message.actionError = "The notification request could not be saved. Please try again."
+                }
+            }
+        }
+    }
+}
+
+private struct CommunityResponsesSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let responses: [CommunityJournalistResponse]
+    let isLoading: Bool
+    let errorMessage: String?
+    let onRefresh: () -> Void
+    let onMarkRead: (CommunityJournalistResponse) -> Void
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading && responses.isEmpty {
+                    ProgressView("Checking for journalist responses…")
+                } else if let errorMessage, responses.isEmpty {
+                    ContentUnavailableView(
+                        "Responses are not ready",
+                        systemImage: "exclamationmark.bubble",
+                        description: Text(errorMessage)
+                    )
+                } else if responses.isEmpty {
+                    ContentUnavailableView(
+                        "No journalist responses yet",
+                        systemImage: "newspaper",
+                        description: Text("Verified answers to your saved community questions will appear here.")
+                    )
+                } else {
+                    List {
+                        if let errorMessage {
+                            Section {
+                                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+
+                        Section("Answers to your questions") {
+                            ForEach(responses) { response in
+                                VStack(alignment: .leading, spacing: 10) {
+                                    HStack(alignment: .firstTextBaseline) {
+                                        Text(response.originalQuestion)
+                                            .font(.headline)
+                                        Spacer()
+                                        if response.isUnread {
+                                            Text("NEW")
+                                                .font(.system(size: 9, weight: .black))
+                                                .foregroundStyle(.white)
+                                                .padding(.horizontal, 7)
+                                                .padding(.vertical, 3)
+                                                .background(.purple, in: Capsule())
+                                        }
+                                    }
+
+                                    Text(response.answerText)
+                                        .font(.body)
+
+                                    Link(destination: response.sourceURL) {
+                                        Label(response.sourceTitle, systemImage: "link")
+                                            .font(.subheadline.weight(.semibold))
+                                    }
+
+                                    if response.isUnread {
+                                        Button("Mark as read") {
+                                            onMarkRead(response)
+                                        }
+                                        .font(.caption.weight(.semibold))
+                                    }
+                                }
+                                .padding(.vertical, 7)
+                            }
+                        }
+
+                        Section {
+                            Text("Responses are delivered privately through the app. Journalists cannot see your email address, phone number, or account identity.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Journalist Responses")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(action: onRefresh) {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(isLoading)
+                    .accessibilityLabel("Refresh journalist responses")
                 }
             }
         }

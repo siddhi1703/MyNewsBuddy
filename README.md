@@ -59,6 +59,11 @@ Follow [SUPABASE_JOURNALIST_ACCESS.md](SUPABASE_JOURNALIST_ACCESS.md) to grant a
 approved editor access to **Profile → Journalist Inbox**. Community accounts
 cannot read cross-user clusters.
 
+Run [SUPABASE_JOURNALIST_RESPONSE_SETUP.md](SUPABASE_JOURNALIST_RESPONSE_SETUP.md)
+to activate the human-in-the-loop response flow: journalist drafts, cited
+publication, private delivery to affected users, dismissal, and reuse of
+published responses as trusted evidence for similar future questions.
+
 ## Run
 
 1. Open `HyperlocalNews.xcodeproj` in Xcode.

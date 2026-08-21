@@ -88,6 +88,7 @@ struct ChatAPIService {
         weather: WeatherSnapshot?,
         transit: MBTAAlertsSnapshot? = nil,
         arrivals: MBTAArrivalsSnapshot? = nil,
+        journalistAnswers: [PublishedJournalistAnswer] = [],
         history: [ChatAPIHistoryMessage] = []
     ) async throws -> ChatAPIResponse {
         guard let baseURL = AppConfiguration.chatAPIBaseURL else {
@@ -104,6 +105,7 @@ struct ChatAPIService {
         if let arrivals {
             evidence.append(arrivalEvidence(from: arrivals))
         }
+        evidence.append(contentsOf: journalistAnswers.map(journalistEvidence))
         let body = AskRequest(
             question: question,
             location: weather?.location ?? arrivals?.queryLocation ?? transit?.scope,
@@ -222,6 +224,20 @@ struct ChatAPIService {
             url: arrivals.sourceURL,
             text: arrivals.evidenceText,
             retrievedAt: formatter.string(from: arrivals.retrievedAt)
+        )
+    }
+
+    private func journalistEvidence(from answer: PublishedJournalistAnswer) -> Evidence {
+        Evidence(
+            sourceID: "journalist-response-\(answer.id.uuidString)",
+            title: answer.sourceTitle,
+            url: answer.sourceURL,
+            text: [
+                "Verified local journalist response",
+                "Original community topic: \(answer.representativeQuestion)",
+                "Published answer: \(answer.answerText)"
+            ].joined(separator: "\n"),
+            retrievedAt: answer.publishedAt
         )
     }
 }

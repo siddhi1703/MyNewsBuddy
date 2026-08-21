@@ -46,6 +46,73 @@ struct JournalistGapSummary: Decodable {
     )
 }
 
+struct JournalistResponseDraft: Decodable {
+    let responseID: UUID
+    let responseText: String
+    let sourceTitle: String
+    let sourceURL: URL
+    let responseStatus: String
+    let updatedAt: String
+    let publishedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case responseID = "response_id"
+        case responseText = "response_text"
+        case sourceTitle = "source_title"
+        case sourceURL = "source_url"
+        case responseStatus = "response_status"
+        case updatedAt = "updated_at"
+        case publishedAt = "published_at"
+    }
+}
+
+struct CommunityJournalistResponse: Decodable, Identifiable {
+    let notificationID: UUID
+    let clusterID: UUID
+    let originalQuestion: String
+    let answerText: String
+    let sourceTitle: String
+    let sourceURL: URL
+    let publishedAt: String
+    let readAt: String?
+
+    var id: UUID { notificationID }
+    var isUnread: Bool { readAt == nil }
+
+    enum CodingKeys: String, CodingKey {
+        case notificationID = "notification_id"
+        case clusterID = "cluster_id"
+        case originalQuestion = "original_question"
+        case answerText = "answer_text"
+        case sourceTitle = "source_title"
+        case sourceURL = "source_url"
+        case publishedAt = "published_at"
+        case readAt = "read_at"
+    }
+}
+
+struct PublishedJournalistAnswer: Decodable, Identifiable {
+    let responseID: UUID
+    let representativeQuestion: String
+    let answerText: String
+    let sourceTitle: String
+    let sourceURL: URL
+    let publishedAt: String
+    let similarityScore: Double
+
+    var id: UUID { responseID }
+
+    enum CodingKeys: String, CodingKey {
+        case responseID = "response_id"
+        case representativeQuestion = "representative_question"
+        case answerText = "answer_text"
+        case sourceTitle = "source_title"
+        case sourceURL = "source_url"
+        case publishedAt = "published_at"
+        case similarityScore = "similarity_score"
+    }
+}
+
 enum JournalistDashboardError: LocalizedError {
     case signedOut
     case invalidResponse
@@ -126,6 +193,51 @@ actor JournalistGapService {
         }
     }
 
+    func fetchResponse(for clusterID: UUID) async throws -> JournalistResponseDraft? {
+        guard await hasJournalistAccess() else {
+            throw JournalistDashboardError.accessRequired
+        }
+        let body = try JSONEncoder().encode(ClusterIDRequest(clusterID: clusterID))
+        let data = try await callRPC(path: "get_journalist_response", body: body)
+        do {
+            return try JSONDecoder().decode([JournalistResponseDraft].self, from: data).first
+        } catch {
+            throw JournalistDashboardError.invalidResponse
+        }
+    }
+
+    func saveResponse(
+        clusterID: UUID,
+        answer: String,
+        sourceTitle: String,
+        sourceURL: URL,
+        publish: Bool
+    ) async throws {
+        guard await hasJournalistAccess() else {
+            throw JournalistDashboardError.accessRequired
+        }
+        let body = try JSONEncoder().encode(
+            SaveResponseRequest(
+                clusterID: clusterID,
+                answer: answer,
+                sourceTitle: sourceTitle,
+                sourceURL: sourceURL.absoluteString,
+                publish: publish
+            )
+        )
+        _ = try await callRPC(path: "save_journalist_response", body: body)
+    }
+
+    func dismiss(clusterID: UUID, reason: String) async throws {
+        guard await hasJournalistAccess() else {
+            throw JournalistDashboardError.accessRequired
+        }
+        let body = try JSONEncoder().encode(
+            DismissClusterRequest(clusterID: clusterID, reason: reason)
+        )
+        _ = try await callRPC(path: "dismiss_information_gap", body: body)
+    }
+
     private func callRPC(path: String, body: Data) async throws -> Data {
         let configuration: AuthConfiguration
         do {
@@ -164,11 +276,135 @@ actor JournalistGapService {
     }
 }
 
+actor CommunityResponseService {
+    private let authentication = SupabaseAuthService()
+
+    func notifications() async throws -> [CommunityJournalistResponse] {
+        let data = try await callRPC(
+            path: "get_my_journalist_notifications",
+            body: Data("{}".utf8)
+        )
+        do {
+            return try JSONDecoder().decode([CommunityJournalistResponse].self, from: data)
+        } catch {
+            throw JournalistDashboardError.invalidResponse
+        }
+    }
+
+    func markRead(_ notificationID: UUID) async throws {
+        let body = try JSONEncoder().encode(
+            NotificationIDRequest(notificationID: notificationID)
+        )
+        _ = try await callRPC(path: "mark_journalist_notification_read", body: body)
+    }
+
+    func searchPublishedAnswers(for question: String) async throws -> [PublishedJournalistAnswer] {
+        let body = try JSONEncoder().encode(
+            PublishedAnswerSearchRequest(question: question, threshold: 0.35)
+        )
+        let data = try await callRPC(
+            path: "search_published_journalist_answers",
+            body: body
+        )
+        do {
+            return try JSONDecoder().decode([PublishedJournalistAnswer].self, from: data)
+        } catch {
+            throw JournalistDashboardError.invalidResponse
+        }
+    }
+
+    private func callRPC(path: String, body: Data) async throws -> Data {
+        let configuration: AuthConfiguration
+        do {
+            configuration = try AuthConfiguration.load()
+        } catch {
+            throw JournalistDashboardError.server(error.localizedDescription)
+        }
+
+        guard let accessToken = await authentication.currentAccessToken() else {
+            throw JournalistDashboardError.signedOut
+        }
+
+        let endpoint = configuration.projectURL.appending(path: "rest/v1/rpc/\(path)")
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.httpBody = body
+        request.setValue(configuration.publishableKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw JournalistDashboardError.invalidResponse
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let apiError = try? JSONDecoder().decode(DashboardAPIError.self, from: data)
+            throw JournalistDashboardError.server(
+                apiError?.message ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+            )
+        }
+        return data
+    }
+}
+
 private struct ClusterRequest: Encodable {
     let minimumQuestions: Int
 
     enum CodingKeys: String, CodingKey {
         case minimumQuestions = "minimum_questions"
+    }
+}
+
+private struct ClusterIDRequest: Encodable {
+    let clusterID: UUID
+
+    enum CodingKeys: String, CodingKey {
+        case clusterID = "target_cluster_id"
+    }
+}
+
+private struct SaveResponseRequest: Encodable {
+    let clusterID: UUID
+    let answer: String
+    let sourceTitle: String
+    let sourceURL: String
+    let publish: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case clusterID = "target_cluster_id"
+        case answer = "answer_text"
+        case sourceTitle = "answer_source_title"
+        case sourceURL = "answer_source_url"
+        case publish
+    }
+}
+
+private struct DismissClusterRequest: Encodable {
+    let clusterID: UUID
+    let reason: String
+
+    enum CodingKeys: String, CodingKey {
+        case clusterID = "target_cluster_id"
+        case reason
+    }
+}
+
+private struct NotificationIDRequest: Encodable {
+    let notificationID: UUID
+
+    enum CodingKeys: String, CodingKey {
+        case notificationID = "target_notification_id"
+    }
+}
+
+private struct PublishedAnswerSearchRequest: Encodable {
+    let question: String
+    let threshold: Double
+
+    enum CodingKeys: String, CodingKey {
+        case question = "query_text"
+        case threshold = "match_threshold"
     }
 }
 
@@ -311,7 +547,9 @@ struct JournalistDashboardView: View {
         .sheet(item: $presentedSheet) { sheet in
             switch sheet {
             case .cluster(let cluster):
-                JournalistClusterDetailSheet(cluster: cluster)
+                JournalistClusterDetailSheet(cluster: cluster) {
+                    Task { await model.load() }
+                }
             case .summary(let metric):
                 JournalistSummaryDetailView(
                     metric: metric,
@@ -400,64 +638,224 @@ private struct JournalistClusterRow: View {
     }
 }
 
-private struct JournalistClusterDetailView: View {
-    let cluster: InformationGapCluster
-
-    var body: some View {
-        List {
-            Section("Reporting lead") {
-                Text(cluster.representativeQuestion)
-                    .font(.headline)
-                LabeledContent("Category", value: cluster.category.replacingOccurrences(of: "_", with: " ").capitalized)
-                LabeledContent("Status", value: cluster.status.capitalized)
-                LabeledContent("Questions", value: "\(cluster.questionCount)")
-                LabeledContent("Unique askers", value: "\(cluster.uniqueAskerCount)")
-            }
-
-            Section("Locations") {
-                ForEach(cluster.locations, id: \.self) { location in
-                    Label(location, systemImage: "mappin.and.ellipse")
-                }
-            }
-
-            Section("Example community questions") {
-                ForEach(cluster.questionExamples, id: \.self) { question in
-                    Text(question)
-                }
-            }
-
-            Section("Timeline") {
-                LabeledContent("First asked") {
-                    Text(cluster.firstSeenAt, style: .date)
-                }
-                LabeledContent("Most recent") {
-                    Text(cluster.lastSeenAt, style: .relative)
-                }
-            }
-
-            Section {
-                Text("This is a reporting lead, not a verified story. A journalist must review the premise and supporting evidence before publication.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .navigationTitle("Gap details")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
 private struct JournalistClusterDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     let cluster: InformationGapCluster
+    let onChanged: () -> Void
+
+    @State private var answer = ""
+    @State private var sourceTitle = ""
+    @State private var sourceURL = ""
+    @State private var isLoadingDraft = false
+    @State private var isSaving = false
+    @State private var isPublished = false
+    @State private var feedbackMessage: String?
+    @State private var errorMessage: String?
+    @State private var isConfirmingDismissal = false
+
+    private let service = JournalistGapService()
 
     var body: some View {
         NavigationStack {
-            JournalistClusterDetailView(cluster: cluster)
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("Done") { dismiss() }
+            List {
+                Section("Reporting lead") {
+                    Text(cluster.representativeQuestion)
+                        .font(.headline)
+                    LabeledContent("Category", value: displayCategory)
+                    LabeledContent("Status", value: cluster.status.capitalized)
+                    LabeledContent("Questions", value: "\(cluster.questionCount)")
+                    LabeledContent("Unique askers", value: "\(cluster.uniqueAskerCount)")
+                }
+
+                Section("Example community questions") {
+                    ForEach(cluster.questionExamples, id: \.self) { question in
+                        Text(question)
                     }
                 }
+
+                if !cluster.locations.isEmpty {
+                    Section("Locations") {
+                        ForEach(cluster.locations, id: \.self) { location in
+                            Label(location, systemImage: "mappin.and.ellipse")
+                        }
+                    }
+                }
+
+                Section {
+                    if isLoadingDraft {
+                        ProgressView("Loading saved draft…")
+                    }
+
+                    TextEditor(text: $answer)
+                        .frame(minHeight: 130)
+                        .accessibilityLabel("Verified journalist answer")
+
+                    TextField("Source title", text: $sourceTitle)
+                    TextField("https://official-source.example/article", text: $sourceURL)
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .textContentType(.URL)
+                } header: {
+                    Text("Verified journalist response")
+                } footer: {
+                    Text("Use an official document or published reporting source. Users receive the answer only after you publish it.")
+                }
+
+                if let feedbackMessage {
+                    Section {
+                        Label(feedbackMessage, systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                }
+
+                if let errorMessage {
+                    Section {
+                        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                    }
+                }
+
+                Section {
+                    Button {
+                        save(publish: false)
+                    } label: {
+                        Label("Save Draft", systemImage: "square.and.arrow.down")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .disabled(!isResponseValid || isSaving || isPublished)
+
+                    Button {
+                        save(publish: true)
+                    } label: {
+                        Label(
+                            isPublished ? "Publish Verified Update" : "Publish Answer to Users",
+                            systemImage: "paperplane.fill"
+                        )
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.purple)
+                    .disabled(!isResponseValid || isSaving)
+
+                    Button("Dismiss as Not a Reporting Gap", role: .destructive) {
+                        isConfirmingDismissal = true
+                    }
+                    .frame(maxWidth: .infinity)
+                    .disabled(isSaving)
+                }
+
+                Section {
+                    Text("Publishing resolves the linked questions and privately notifies their askers. Community names and contact information are never shown here.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Review topic")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .task { await loadDraft() }
+            .confirmationDialog(
+                "Dismiss this reporting lead?",
+                isPresented: $isConfirmingDismissal,
+                titleVisibility: .visible
+            ) {
+                Button("Dismiss Lead", role: .destructive, action: dismissLead)
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("It will leave the active journalist inbox, but its research audit record will be preserved.")
+            }
+        }
+    }
+
+    private var displayCategory: String {
+        cluster.category.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    private var verifiedSourceURL: URL? {
+        guard let url = URL(string: sourceURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+              url.scheme?.lowercased() == "https",
+              url.host != nil else {
+            return nil
+        }
+        return url
+    }
+
+    private var isResponseValid: Bool {
+        !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !sourceTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && verifiedSourceURL != nil
+    }
+
+    @MainActor
+    private func loadDraft() async {
+        isLoadingDraft = true
+        defer { isLoadingDraft = false }
+        do {
+            if let draft = try await service.fetchResponse(for: cluster.id) {
+                answer = draft.responseText
+                sourceTitle = draft.sourceTitle
+                sourceURL = draft.sourceURL.absoluteString
+                if draft.responseStatus == "published" {
+                    isPublished = true
+                    feedbackMessage = "This answer has already been published."
+                }
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func save(publish: Bool) {
+        guard let verifiedSourceURL else { return }
+        isSaving = true
+        feedbackMessage = nil
+        errorMessage = nil
+
+        Task { @MainActor in
+            defer { isSaving = false }
+            do {
+                try await service.saveResponse(
+                    clusterID: cluster.id,
+                    answer: answer.trimmingCharacters(in: .whitespacesAndNewlines),
+                    sourceTitle: sourceTitle.trimmingCharacters(in: .whitespacesAndNewlines),
+                    sourceURL: verifiedSourceURL,
+                    publish: publish
+                )
+                feedbackMessage = publish
+                    ? "Published and delivered to affected users."
+                    : "Draft saved."
+                onChanged()
+                if publish {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    dismiss()
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func dismissLead() {
+        isSaving = true
+        feedbackMessage = nil
+        errorMessage = nil
+        Task { @MainActor in
+            defer { isSaving = false }
+            do {
+                try await service.dismiss(
+                    clusterID: cluster.id,
+                    reason: "Dismissed as not a reporting gap after journalist review."
+                )
+                onChanged()
+                dismiss()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 }
