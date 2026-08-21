@@ -1283,7 +1283,7 @@ private struct ChatView: View {
                     let routeError = ChatMessage(
                         role: .assistant,
                         text: "I couldn’t match one of those places. Try complete names such as “390 Riverway, Boston, MA” and “Northeastern University, Boston, MA.”",
-                        state: .setup,
+                        state: .clarification,
                         source: nil,
                         sourceURL: nil
                     )
@@ -1308,7 +1308,7 @@ private struct ChatView: View {
                         let errorMessage = ChatMessage(
                             role: .assistant,
                             text: "Sorry, I couldn’t find \(requestedCity) in the National Weather Service coverage area. Could you try the city and state together—for example, “Boston, MA”?",
-                            state: .setup,
+                            state: .clarification,
                             source: nil,
                             sourceURL: nil
                         )
@@ -1649,8 +1649,9 @@ private struct ChatView: View {
             "an", "weather", "forecast", "today", "tonight", "right", "now",
             "tomorrow", "tomorrows", "tomorrow’s", "tommorrow", "tommorrows",
             "tommorrow’s", "tomorow", "tomoros", "like", "after", "before",
-            "next", "later", "on", "day", "days", "week", "weeks", "month",
-            "months"
+            "next", "this", "coming", "later", "on", "day", "days", "week",
+            "weeks", "weekend", "month", "months", "monday", "tuesday",
+            "wednesday", "thursday", "friday", "saturday", "sunday"
         ]
         let separators = CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters)
         let words = rawCandidate
@@ -2016,6 +2017,7 @@ private struct ChatMessage: Identifiable {
 
     enum AnswerState {
         case setup
+        case clarification
         case cited
         case abstained
         case outOfScope
@@ -2025,6 +2027,7 @@ private struct ChatMessage: Identifiable {
         var storageValue: String {
             switch self {
             case .setup: "setup"
+            case .clarification: "clarification"
             case .cited: "cited"
             case .abstained: "abstained"
             case .outOfScope: "out_of_scope"
@@ -2036,6 +2039,7 @@ private struct ChatMessage: Identifiable {
         init?(storageValue: String?) {
             switch storageValue {
             case "setup": self = .setup
+            case "clarification": self = .clarification
             case "cited": self = .cited
             case "abstained": self = .abstained
             case "out_of_scope": self = .outOfScope
@@ -2162,6 +2166,10 @@ private struct ChatBubble: View {
         switch state {
         case .setup:
             Label("Live connection required", systemImage: "location.circle.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.orange)
+        case .clarification:
+            Label("Location clarification needed", systemImage: "mappin.and.ellipse")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.orange)
         case .cited:
