@@ -215,6 +215,7 @@ private final class JournalistDashboardModel: ObservableObject {
 
 struct JournalistDashboardView: View {
     @StateObject private var model = JournalistDashboardModel()
+    @State private var presentedSheet: JournalistDashboardSheet?
 
     var body: some View {
         Group {
@@ -236,22 +237,35 @@ struct JournalistDashboardView: View {
                 List {
                     Section {
                         HStack {
-                            JournalistMetric(
-                                value: "\(model.summary.topicCount)",
-                                label: "Topics",
-                                color: .purple
-                            )
-                            JournalistMetric(
-                                value: "\(model.summary.questionCount)",
-                                label: "Questions",
-                                color: .orange
-                            )
-                            JournalistMetric(
-                                value: "\(model.summary.uniqueAskerCount)",
-                                label: "Askers",
-                                color: .blue
-                            )
+                            Button {
+                                presentedSheet = .summary(.topics)
+                            } label: {
+                                JournalistMetric(
+                                    value: "\(model.summary.topicCount)",
+                                    label: "Topics",
+                                    color: .purple
+                                )
+                            }
+                            Button {
+                                presentedSheet = .summary(.questions)
+                            } label: {
+                                JournalistMetric(
+                                    value: "\(model.summary.questionCount)",
+                                    label: "Questions",
+                                    color: .orange
+                                )
+                            }
+                            Button {
+                                presentedSheet = .summary(.askers)
+                            } label: {
+                                JournalistMetric(
+                                    value: "\(model.summary.uniqueAskerCount)",
+                                    label: "Askers",
+                                    color: .blue
+                                )
+                            }
                         }
+                        .buttonStyle(.plain)
                         .padding(.vertical, 8)
                     } header: {
                         Text("Community signal")
@@ -259,12 +273,17 @@ struct JournalistDashboardView: View {
 
                     Section("Information-gap clusters") {
                         ForEach(model.clusters) { cluster in
-                            NavigationLink {
-                                JournalistClusterDetailView(cluster: cluster)
+                            Button {
+                                presentedSheet = .cluster(cluster)
                             } label: {
-                                JournalistClusterRow(cluster: cluster)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .contentShape(Rectangle())
+                                HStack(spacing: 10) {
+                                    JournalistClusterRow(cluster: cluster)
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("Open topic: \(cluster.representativeQuestion)")
@@ -289,6 +308,40 @@ struct JournalistDashboardView: View {
             }
         }
         .task { await model.load() }
+        .sheet(item: $presentedSheet) { sheet in
+            switch sheet {
+            case .cluster(let cluster):
+                JournalistClusterDetailSheet(cluster: cluster)
+            case .summary(let metric):
+                JournalistSummaryDetailView(
+                    metric: metric,
+                    summary: model.summary,
+                    clusters: model.clusters
+                )
+            }
+        }
+    }
+}
+
+private enum JournalistSummaryMetric: String, Identifiable {
+    case topics
+    case questions
+    case askers
+
+    var id: String { rawValue }
+}
+
+private enum JournalistDashboardSheet: Identifiable {
+    case cluster(InformationGapCluster)
+    case summary(JournalistSummaryMetric)
+
+    var id: String {
+        switch self {
+        case .cluster(let cluster):
+            "cluster-\(cluster.id.uuidString)"
+        case .summary(let metric):
+            "summary-\(metric.rawValue)"
+        }
     }
 }
 
@@ -390,5 +443,96 @@ private struct JournalistClusterDetailView: View {
         }
         .navigationTitle("Gap details")
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct JournalistClusterDetailSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let cluster: InformationGapCluster
+
+    var body: some View {
+        NavigationStack {
+            JournalistClusterDetailView(cluster: cluster)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") { dismiss() }
+                    }
+                }
+        }
+    }
+}
+
+private struct JournalistSummaryDetailView: View {
+    @Environment(\.dismiss) private var dismiss
+    let metric: JournalistSummaryMetric
+    let summary: JournalistGapSummary
+    let clusters: [InformationGapCluster]
+
+    var body: some View {
+        NavigationStack {
+            List {
+                switch metric {
+                case .topics:
+                    Section("Active reporting topics") {
+                        ForEach(clusters) { cluster in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(cluster.representativeQuestion)
+                                    .font(.headline)
+                                Text(cluster.category.replacingOccurrences(of: "_", with: " ").capitalized)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 3)
+                        }
+                    }
+
+                case .questions:
+                    ForEach(clusters) { cluster in
+                        Section(cluster.representativeQuestion) {
+                            ForEach(Array(cluster.questionExamples.enumerated()), id: \.offset) { _, question in
+                                Text(question)
+                            }
+                        }
+                    }
+
+                case .askers:
+                    Section {
+                        LabeledContent("Distinct community askers", value: "\(summary.uniqueAskerCount)")
+                    } footer: {
+                        Text("Names and email addresses are intentionally hidden to protect community members.")
+                    }
+
+                    Section("Participation by topic") {
+                        ForEach(clusters) { cluster in
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(cluster.representativeQuestion)
+                                Label(
+                                    "\(cluster.uniqueAskerCount) unique asker\(cluster.uniqueAskerCount == 1 ? "" : "s")",
+                                    systemImage: "person.2.fill"
+                                )
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 3)
+                        }
+                    }
+                }
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private var title: String {
+        switch metric {
+        case .topics: "Topics (\(summary.topicCount))"
+        case .questions: "Questions (\(summary.questionCount))"
+        case .askers: "Askers (\(summary.uniqueAskerCount))"
+        }
     }
 }
