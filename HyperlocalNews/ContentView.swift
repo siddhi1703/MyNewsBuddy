@@ -1645,7 +1645,7 @@ private struct ChatView: View {
         let ignoredWords: Set<String> = [
             "hello", "hi", "hey", "please", "tell", "show", "me", "good",
             "morning", "afternoon", "evening", "what", "whats", "what’s",
-            "will", "would", "can", "could", "is", "are", "be", "the", "a",
+            "will", "would", "can", "could", "is", "are", "be", "the", "a", "s",
             "an", "weather", "forecast", "today", "tonight", "right", "now",
             "tomorrow", "tomorrows", "tomorrow’s", "tommorrow", "tommorrows",
             "tommorrow’s", "tomorow", "tomoros", "like", "after", "before",
