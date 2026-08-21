@@ -324,7 +324,7 @@ as $$
         similarity(
             cluster.normalized_question,
             public.normalize_gap_question(query_text)
-        )::double precision
+        )::double precision as similarity_score
     from public.journalist_responses as response
     join public.information_gap_clusters as cluster
       on cluster.id = response.cluster_id
