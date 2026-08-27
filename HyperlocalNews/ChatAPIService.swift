@@ -220,6 +220,9 @@ struct ChatAPIService {
         let currentConditionsLabel = weather.observationStation.map {
             "Latest station observation (\($0))"
         } ?? "Current hourly forecast"
+        let sourceTitle = weather.observationStation.map {
+            "National Weather Service observation from \($0) for \(weather.location)"
+        } ?? "National Weather Service hourly forecast for \(weather.location)"
         let evidenceText = ([
             "Location: \(weather.location)",
             "Time zone: \(weather.timeZoneIdentifier)",
@@ -230,7 +233,7 @@ struct ChatAPIService {
 
         return Evidence(
             sourceID: "nws-forecast",
-            title: "National Weather Service conditions and forecast for \(weather.location)",
+            title: sourceTitle,
             url: weather.sourceURL ?? URL(string: "https://www.weather.gov")!,
             text: evidenceText,
             retrievedAt: formatter.string(from: .now)
