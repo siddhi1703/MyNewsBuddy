@@ -449,9 +449,24 @@ private struct AuthenticationLandingView: View {
                 .frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 12)
+                    .onEnded { value in
+                        if value.translation.height > 12 {
+                            focusedField = nil
+                        }
+                    }
+            )
         }
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
+                Button {
+                    focusedField = nil
+                } label: {
+                    Image(systemName: "keyboard.chevron.compact.down")
+                }
+                .accessibilityLabel("Hide keyboard")
+
                 Spacer()
                 Button(keyboardActionTitle) {
                     advanceKeyboardFocus()
