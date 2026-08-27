@@ -1,7 +1,17 @@
+import os
 import unittest
+from unittest.mock import patch
 
+import httpx
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from app.auth import (
+    AuthenticatedUser,
+    PerUserRateLimiter,
+    authorize_chat_request,
+    verify_supabase_token,
+)
 from app.gemini import _grounded_response, _parse_model_answer
 from app.main import app
 from app.schemas import AskRequest, EvidenceItem, ModelAnswer
@@ -9,6 +19,10 @@ from app.schemas import AskRequest, EvidenceItem, ModelAnswer
 
 class GroundingTests(unittest.TestCase):
     def setUp(self) -> None:
+        async def authenticated_user() -> AuthenticatedUser:
+            return AuthenticatedUser(id="test-user", email="reader@example.com")
+
+        app.dependency_overrides[authorize_chat_request] = authenticated_user
         self.evidence = EvidenceItem(
             source_id="nws-forecast",
             title="National Weather Service forecast for Boston, MA",
@@ -16,6 +30,9 @@ class GroundingTests(unittest.TestCase):
             text="Tomorrow: rain chance 70%; high 68°F.",
             retrieved_at="2026-08-18T20:00:00Z",
         )
+
+    def tearDown(self) -> None:
+        app.dependency_overrides.clear()
 
     def test_answer_keeps_only_a_known_citation(self) -> None:
         request = AskRequest(
@@ -136,7 +153,18 @@ class GroundingTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["model_configured"])
+        self.assertIn("authentication_configured", response.json())
         self.assertNotIn("api_key", response.json())
+
+    def test_ask_requires_a_signed_in_user(self) -> None:
+        app.dependency_overrides.pop(authorize_chat_request, None)
+        response = TestClient(app).post(
+            "/ask",
+            json={"question": "Will it rain in Boston?", "evidence": []},
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("Sign in", response.json()["detail"])
 
     def test_missing_model_key_is_a_system_miss_not_a_gap(self) -> None:
         response = TestClient(app).post(
@@ -213,6 +241,55 @@ class GroundingTests(unittest.TestCase):
         self.assertEqual(len(response.citations), 1)
         self.assertIn("MBTA", response.citations[0].title)
 
+
+class AuthenticationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_valid_supabase_session_returns_user(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.headers["authorization"], "Bearer valid-token")
+            self.assertEqual(request.headers["apikey"], "public-key")
+            return httpx.Response(
+                200,
+                json={"id": "user-123", "email": "reader@example.com"},
+            )
+
+        environment = {
+            "SUPABASE_URL": "https://example.supabase.co",
+            "SUPABASE_PUBLISHABLE_KEY": "public-key",
+        }
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with patch.dict(os.environ, environment):
+                user = await verify_supabase_token("valid-token", client=client)
+
+        self.assertEqual(user.id, "user-123")
+        self.assertEqual(user.email, "reader@example.com")
+
+    async def test_invalid_supabase_session_is_rejected(self) -> None:
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(401, json={"message": "invalid token"})
+
+        environment = {
+            "SUPABASE_URL": "https://example.supabase.co",
+            "SUPABASE_PUBLISHABLE_KEY": "public-key",
+        }
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with patch.dict(os.environ, environment):
+                with self.assertRaises(HTTPException) as context:
+                    await verify_supabase_token("invalid-token", client=client)
+
+        self.assertEqual(context.exception.status_code, 401)
+
+    async def test_per_user_rate_limit_rejects_burst(self) -> None:
+        limiter = PerUserRateLimiter()
+        with patch.dict(os.environ, {"CHAT_REQUESTS_PER_MINUTE": "2"}):
+            await limiter.check("user-123")
+            await limiter.check("user-123")
+            with self.assertRaises(HTTPException) as context:
+                await limiter.check("user-123")
+
+        self.assertEqual(context.exception.status_code, 429)
+
+
+class ModelParsingTests(unittest.TestCase):
     def test_parser_accepts_json_split_across_text_parts(self) -> None:
         response = {
             "candidates": [

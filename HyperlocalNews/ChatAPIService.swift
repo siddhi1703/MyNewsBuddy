@@ -32,6 +32,7 @@ struct ChatAPIHistoryMessage: Encodable {
 
 enum ChatAPIError: LocalizedError {
     case invalidConfiguration
+    case authenticationRequired
     case invalidResponse
     case server(statusCode: Int, detail: String)
     case connectionFailed
@@ -40,6 +41,8 @@ enum ChatAPIError: LocalizedError {
         switch self {
         case .invalidConfiguration:
             "The AI service URL is not configured."
+        case .authenticationRequired:
+            "Your session has expired. Please sign in again to use the AI companion."
         case .invalidResponse:
             "The AI service returned an unexpected response."
         case .server(_, let detail):
@@ -51,6 +54,8 @@ enum ChatAPIError: LocalizedError {
 }
 
 struct ChatAPIService {
+    private let authentication = SupabaseAuthService()
+
     private struct AskRequest: Encodable {
         let question: String
         let location: String?
@@ -94,6 +99,9 @@ struct ChatAPIService {
         guard let baseURL = AppConfiguration.chatAPIBaseURL else {
             throw ChatAPIError.invalidConfiguration
         }
+        guard let accessToken = await authentication.currentAccessToken() else {
+            throw ChatAPIError.authenticationRequired
+        }
 
         var evidence: [Evidence] = []
         if let weather {
@@ -118,12 +126,33 @@ struct ChatAPIService {
         // Render Free can take 50 seconds or more to wake after inactivity.
         request.timeoutInterval = 75
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
 
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         request.httpBody = try encoder.encode(body)
 
-        let (data, httpResponse) = try await sendWithColdStartRetry(request)
+        var (data, httpResponse) = try await sendWithColdStartRetry(request)
+
+        if httpResponse.statusCode == 401 {
+            do {
+                try await authentication.restoreSession()
+                guard let refreshedToken = await authentication.currentAccessToken() else {
+                    throw ChatAPIError.authenticationRequired
+                }
+                request.setValue(
+                    "Bearer \(refreshedToken)",
+                    forHTTPHeaderField: "Authorization"
+                )
+                (data, httpResponse) = try await sendWithColdStartRetry(request)
+            } catch {
+                throw ChatAPIError.authenticationRequired
+            }
+        }
+
+        if httpResponse.statusCode == 401 {
+            throw ChatAPIError.authenticationRequired
+        }
 
         guard (200...299).contains(httpResponse.statusCode) else {
             let detail = (try? JSONDecoder().decode(ErrorResponse.self, from: data).detail)

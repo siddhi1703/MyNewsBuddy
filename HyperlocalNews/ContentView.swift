@@ -1462,7 +1462,7 @@ private struct ChatView: View {
                     switch apiError {
                     case .server, .connectionFailed, .invalidResponse:
                         state = .serviceUnavailable
-                    case .invalidConfiguration:
+                    case .invalidConfiguration, .authenticationRequired:
                         state = .setup
                     }
                 } else {

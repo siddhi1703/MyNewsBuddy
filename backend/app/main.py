@@ -1,5 +1,6 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
+from .auth import AuthenticatedUser, auth_is_configured, authorize_chat_request
 from .gemini import GeminiService, GeminiServiceError
 from .schemas import AskRequest, AskResponse
 
@@ -24,11 +25,15 @@ async def health() -> dict[str, str | bool]:
         "provider": "gemini",
         "model": service.model,
         "model_configured": service.is_configured,
+        "authentication_configured": auth_is_configured(),
     }
 
 
 @app.post("/ask", response_model=AskResponse)
-async def ask(request: AskRequest) -> AskResponse:
+async def ask(
+    request: AskRequest,
+    _user: AuthenticatedUser = Depends(authorize_chat_request),
+) -> AskResponse:
     try:
         return await GeminiService().answer(request)
     except GeminiServiceError as error:

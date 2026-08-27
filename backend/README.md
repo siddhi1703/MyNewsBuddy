@@ -24,6 +24,12 @@ uvicorn app.main:app --reload --env-file .env
 Verify <http://127.0.0.1:8000/health>. The response should show
 `"model_configured": true`.
 
+The `/ask` endpoint also requires a valid Supabase user access token. Configure
+`SUPABASE_URL` and the project's public publishable key in `.env`. The iOS app
+sends its Keychain-stored session as `Authorization: Bearer <token>`. FastAPI
+validates that session with Supabase before calling Gemini and limits each user
+to `CHAT_REQUESTS_PER_MINUTE` requests per minute.
+
 The checked-in iOS configuration uses the hosted Render service. To test this
 local server, temporarily set `chatAPIBaseURL` in
 `HyperlocalNews/AppConfiguration.swift` to `http://127.0.0.1:8000`. A physical

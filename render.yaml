@@ -14,3 +14,9 @@ services:
         sync: false
       - key: GEMINI_MODEL
         value: gemini-3.5-flash-lite
+      - key: SUPABASE_URL
+        value: https://rajxtpjbwhcilvwyvrkz.supabase.co
+      - key: SUPABASE_PUBLISHABLE_KEY
+        value: sb_publishable_LYt5UDCkuktF5D7chsiWIA_AQanjNQT
+      - key: CHAT_REQUESTS_PER_MINUTE
+        value: 10
