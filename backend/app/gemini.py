@@ -60,6 +60,10 @@ Rules:
     platform direction, route, and upcoming time. If both directions are present,
     clearly list both. Never infer which platform reaches a requested destination
     unless the supplied evidence explicitly establishes that direction.
+17. For questions asking about conditions "right now" or "currently," use values
+    labeled "Latest station observation" when present. Do not replace those
+    measured values with an hourly or daily forecast. Forecast-only fields, such
+    as precipitation chance, must be described as forecast values.
 """.strip()
 
 

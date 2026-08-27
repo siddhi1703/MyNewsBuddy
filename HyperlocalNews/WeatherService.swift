@@ -161,6 +161,7 @@ struct WeatherSnapshot {
     let isLive: Bool
     let timeZoneIdentifier: String
     let forecastPeriods: [ForecastPeriodSnapshot]
+    let observationStation: String?
 
     static let waiting = WeatherSnapshot(
         condition: .sunny,
@@ -174,7 +175,8 @@ struct WeatherSnapshot {
         sourceURL: URL(string: "https://www.weather.gov"),
         isLive: false,
         timeZoneIdentifier: TimeZone.autoupdatingCurrent.identifier,
-        forecastPeriods: []
+        forecastPeriods: [],
+        observationStation: nil
     )
 }
 
@@ -424,7 +426,14 @@ private enum WeatherService {
         let point: WeatherPointResponse = try await request(pointURL)
         async let hourlyRequest: HourlyForecastResponse = request(point.properties.forecastHourly)
         async let dailyRequest: DailyForecastResponse = request(point.properties.forecast)
-        let (hourly, daily) = try await (hourlyRequest, dailyRequest)
+        async let observationRequest = fetchLatestObservation(
+            from: point.properties.observationStations
+        )
+        let (hourly, daily, stationObservation) = try await (
+            hourlyRequest,
+            dailyRequest,
+            observationRequest
+        )
 
         guard let current = hourly.properties.periods.first else {
             throw WeatherServiceError.noForecast
@@ -441,11 +450,32 @@ private enum WeatherService {
         .filter { !$0.isEmpty }
         .joined(separator: ", ")
 
-        // Show when this device actually received the forecast. The NWS `updateTime`
-        // is the forecast issue time and may legitimately be several hours earlier.
-        let updatedText = "Updated \(Date.now.formatted(date: .omitted, time: .shortened))"
+        let observedTemperature = stationObservation.flatMap { observation in
+            formattedTemperature(from: observation.properties.temperature)
+        }
+        let observedSummary = stationObservation?.properties.textDescription
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let observedWind = stationObservation.flatMap { observation in
+            formattedWind(
+                speed: observation.properties.windSpeed,
+                gust: observation.properties.windGust,
+                direction: observation.properties.windDirection
+            )
+        }
+        let observationDate = stationObservation.flatMap { observation in
+            ISO8601DateFormatter().date(from: observation.properties.timestamp)
+        }
+        let currentSummary = observedSummary.flatMap { $0.isEmpty ? nil : $0 }
+            ?? current.shortForecast
+        let currentTemperature = observedTemperature
+            ?? "\(current.temperature)\(current.temperatureUnit == "C" ? "°C" : "°F")"
+        let currentWind = observedWind ?? current.windSpeed
+        let currentUpdateTime = formattedTime(
+            observationDate ?? .now,
+            timeZoneIdentifier: point.properties.timeZone
+        )
+        let updatedText = "Updated \(currentUpdateTime)"
 
-        let temperatureUnit = current.temperatureUnit == "C" ? "°C" : "°F"
         let chance = Int(current.probabilityOfPrecipitation?.value ?? 0)
         let dateFormatter = ISO8601DateFormatter()
         let forecastPeriods = daily.properties.periods.compactMap { period -> ForecastPeriodSnapshot? in
@@ -471,21 +501,109 @@ private enum WeatherService {
 
         return WeatherSnapshot(
             condition: WeatherCondition.from(
-                summary: current.shortForecast,
+                summary: currentSummary,
                 isDaytime: current.isDaytime
             ),
-            temperature: "\(current.temperature)\(temperatureUnit)",
-            summary: current.shortForecast,
+            temperature: currentTemperature,
+            summary: currentSummary,
             highLow: "Next 12h · H \(high)°  L \(low)°",
             location: location.isEmpty ? "Current location" : location,
             updatedText: updatedText,
             precipitation: "\(chance)%",
-            wind: current.windSpeed,
+            wind: currentWind,
             sourceURL: readableSource?.url,
             isLive: true,
             timeZoneIdentifier: point.properties.timeZone,
-            forecastPeriods: forecastPeriods
+            forecastPeriods: forecastPeriods,
+            observationStation: stationObservation?.stationIdentifier
         )
+    }
+
+    private static func fetchLatestObservation(
+        from stationsURL: URL?
+    ) async -> LatestObservation? {
+        guard let stationsURL else { return nil }
+
+        do {
+            let stations: ObservationStationsResponse = try await request(stationsURL)
+            guard let stationIdentifier = stations.features.first?.properties.stationIdentifier,
+                  let observationURL = URL(
+                    string: "https://api.weather.gov/stations/\(stationIdentifier)/observations/latest"
+                  ) else {
+                return nil
+            }
+            let response: LatestObservationResponse = try await request(observationURL)
+            return LatestObservation(
+                stationIdentifier: stationIdentifier,
+                properties: response.properties
+            )
+        } catch {
+            // Current observations can occasionally be delayed or absent. Keep
+            // the forecast usable and clearly fall back to the hourly period.
+            return nil
+        }
+    }
+
+    private static func formattedTemperature(from value: ObservationValue) -> String? {
+        guard let measurement = value.value else { return nil }
+        let fahrenheit: Double
+        if value.unitCode.lowercased().contains("degc") {
+            fahrenheit = measurement * 9 / 5 + 32
+        } else {
+            fahrenheit = measurement
+        }
+        return "\(Int(fahrenheit.rounded()))°F"
+    }
+
+    private static func formattedWind(
+        speed: ObservationValue,
+        gust: ObservationValue,
+        direction: ObservationValue
+    ) -> String? {
+        guard let speedValue = milesPerHour(from: speed) else { return nil }
+        let speedMPH = Int(speedValue.rounded())
+        let directionText = direction.value.map(cardinalDirection) ?? ""
+        var result = [directionText, "\(speedMPH) mph"]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+
+        if let gustValue = milesPerHour(from: gust) {
+            let gustMPH = Int(gustValue.rounded())
+            if gustMPH > speedMPH {
+                result += " · gusts \(gustMPH) mph"
+            }
+        }
+        return result
+    }
+
+    private static func milesPerHour(from value: ObservationValue) -> Double? {
+        guard let measurement = value.value else { return nil }
+        let unit = value.unitCode.lowercased()
+        if unit.contains("km_h") {
+            return measurement * 0.621371
+        }
+        if unit.contains("m_s") {
+            return measurement * 2.23694
+        }
+        return measurement
+    }
+
+    private static func cardinalDirection(_ degrees: Double) -> String {
+        let directions = [
+            "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+            "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"
+        ]
+        let normalized = degrees.truncatingRemainder(dividingBy: 360)
+        let positive = normalized < 0 ? normalized + 360 : normalized
+        let index = Int((positive / 22.5).rounded()) % directions.count
+        return directions[index]
+    }
+
+    private static func formattedTime(_ date: Date, timeZoneIdentifier: String) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+        formatter.timeZone = TimeZone(identifier: timeZoneIdentifier)
+        return formatter.string(from: date)
     }
 
     private static func request<Response: Decodable>(_ url: URL) async throws -> Response {
@@ -546,6 +664,7 @@ private struct WeatherPointResponse: Decodable {
     struct Properties: Decodable {
         let forecast: URL
         let forecastHourly: URL
+        let observationStations: URL?
         let timeZone: String
         let relativeLocation: RelativeLocation?
     }
@@ -597,5 +716,40 @@ private struct Period: Decodable {
 }
 
 private struct QuantitativeValue: Decodable {
+    let value: Double?
+}
+
+private struct ObservationStationsResponse: Decodable {
+    let features: [Feature]
+
+    struct Feature: Decodable {
+        let properties: Properties
+
+        struct Properties: Decodable {
+            let stationIdentifier: String
+        }
+    }
+}
+
+private struct LatestObservationResponse: Decodable {
+    let properties: ObservationProperties
+}
+
+private struct LatestObservation {
+    let stationIdentifier: String
+    let properties: ObservationProperties
+}
+
+private struct ObservationProperties: Decodable {
+    let timestamp: String
+    let textDescription: String
+    let temperature: ObservationValue
+    let windSpeed: ObservationValue
+    let windGust: ObservationValue
+    let windDirection: ObservationValue
+}
+
+private struct ObservationValue: Decodable {
+    let unitCode: String
     let value: Double?
 }

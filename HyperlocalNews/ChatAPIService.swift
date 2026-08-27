@@ -188,17 +188,20 @@ struct ChatAPIService {
             ].joined(separator: "; ")
         }
 
+        let currentConditionsLabel = weather.observationStation.map {
+            "Latest station observation (\($0))"
+        } ?? "Current hourly forecast"
         let evidenceText = ([
             "Location: \(weather.location)",
             "Time zone: \(weather.timeZoneIdentifier)",
-            "Current hourly forecast: temperature=\(weather.temperature); forecast=\(weather.summary); precipitation_chance=\(weather.precipitation); wind=\(weather.wind)",
+            "\(currentConditionsLabel): temperature=\(weather.temperature); conditions=\(weather.summary); precipitation_chance_from_hourly_forecast=\(weather.precipitation); wind=\(weather.wind); \(weather.updatedText)",
             "Next 12 hours: \(weather.highLow)",
             "Forecast periods:"
         ] + periodLines).joined(separator: "\n")
 
         return Evidence(
             sourceID: "nws-forecast",
-            title: "National Weather Service forecast for \(weather.location)",
+            title: "National Weather Service conditions and forecast for \(weather.location)",
             url: weather.sourceURL ?? URL(string: "https://www.weather.gov")!,
             text: evidenceText,
             retrievedAt: formatter.string(from: .now)
