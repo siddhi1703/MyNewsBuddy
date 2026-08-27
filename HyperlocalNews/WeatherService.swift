@@ -453,7 +453,7 @@ private enum WeatherService {
         let observedTemperature = stationObservation.flatMap { observation in
             formattedTemperature(from: observation.properties.temperature)
         }
-        let observedSummary = stationObservation?.properties.textDescription
+        let observedSummary = stationObservation?.properties.textDescription?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let observedWind = stationObservation.flatMap { observation in
             formattedWind(
@@ -463,7 +463,9 @@ private enum WeatherService {
             )
         }
         let observationDate = stationObservation.flatMap { observation in
-            ISO8601DateFormatter().date(from: observation.properties.timestamp)
+            observation.properties.timestamp.flatMap {
+                ISO8601DateFormatter().date(from: $0)
+            }
         }
         let currentSummary = observedSummary.flatMap { $0.isEmpty ? nil : $0 }
             ?? current.shortForecast
@@ -525,18 +527,44 @@ private enum WeatherService {
         guard let stationsURL else { return nil }
 
         do {
-            let stations: ObservationStationsResponse = try await request(stationsURL)
-            guard let stationIdentifier = stations.features.first?.properties.stationIdentifier,
-                  let observationURL = URL(
-                    string: "https://api.weather.gov/stations/\(stationIdentifier)/observations/latest"
-                  ) else {
-                return nil
-            }
-            let response: LatestObservationResponse = try await request(observationURL)
-            return LatestObservation(
-                stationIdentifier: stationIdentifier,
-                properties: response.properties
+            // The unfiltered endpoint can return dozens of full GeoJSON
+            // features. Asking for only the nearest few is substantially more
+            // reliable on a mobile connection.
+            var components = URLComponents(url: stationsURL, resolvingAgainstBaseURL: false)
+            components?.queryItems = [URLQueryItem(name: "limit", value: "3")]
+            let compactStationsURL = components?.url ?? stationsURL
+            let stations: ObservationStationsResponse = try await request(
+                compactStationsURL,
+                attempts: 2
             )
+
+            // A station may briefly have no usable observation. Try the next
+            // nearby station before falling back to an hourly forecast.
+            for feature in stations.features.prefix(3) {
+                let stationIdentifier = feature.properties.stationIdentifier
+                guard let observationURL = URL(
+                    string: "https://api.weather.gov/stations/\(stationIdentifier)/observations/latest"
+                ) else {
+                    continue
+                }
+
+                do {
+                    let response: LatestObservationResponse = try await request(
+                        observationURL,
+                        attempts: 2
+                    )
+                    guard formattedTemperature(from: response.properties.temperature) != nil else {
+                        continue
+                    }
+                    return LatestObservation(
+                        stationIdentifier: stationIdentifier,
+                        properties: response.properties
+                    )
+                } catch {
+                    continue
+                }
+            }
+            return nil
         } catch {
             // Current observations can occasionally be delayed or absent. Keep
             // the forecast usable and clearly fall back to the hourly period.
@@ -544,10 +572,10 @@ private enum WeatherService {
         }
     }
 
-    private static func formattedTemperature(from value: ObservationValue) -> String? {
-        guard let measurement = value.value else { return nil }
+    private static func formattedTemperature(from value: ObservationValue?) -> String? {
+        guard let value, let measurement = value.value else { return nil }
         let fahrenheit: Double
-        if value.unitCode.lowercased().contains("degc") {
+        if value.unitCode?.lowercased().contains("degc") == true {
             fahrenheit = measurement * 9 / 5 + 32
         } else {
             fahrenheit = measurement
@@ -556,13 +584,13 @@ private enum WeatherService {
     }
 
     private static func formattedWind(
-        speed: ObservationValue,
-        gust: ObservationValue,
-        direction: ObservationValue
+        speed: ObservationValue?,
+        gust: ObservationValue?,
+        direction: ObservationValue?
     ) -> String? {
         guard let speedValue = milesPerHour(from: speed) else { return nil }
         let speedMPH = Int(speedValue.rounded())
-        let directionText = direction.value.map(cardinalDirection) ?? ""
+        let directionText = direction?.value.map(cardinalDirection) ?? ""
         var result = [directionText, "\(speedMPH) mph"]
             .filter { !$0.isEmpty }
             .joined(separator: " ")
@@ -576,9 +604,9 @@ private enum WeatherService {
         return result
     }
 
-    private static func milesPerHour(from value: ObservationValue) -> Double? {
-        guard let measurement = value.value else { return nil }
-        let unit = value.unitCode.lowercased()
+    private static func milesPerHour(from value: ObservationValue?) -> Double? {
+        guard let value, let measurement = value.value else { return nil }
+        let unit = value.unitCode?.lowercased() ?? ""
         if unit.contains("km_h") {
             return measurement * 0.621371
         }
@@ -606,32 +634,37 @@ private enum WeatherService {
         return formatter.string(from: date)
     }
 
-    private static func request<Response: Decodable>(_ url: URL) async throws -> Response {
+    private static func request<Response: Decodable>(
+        _ url: URL,
+        attempts: Int = 1
+    ) async throws -> Response {
         var request = URLRequest(url: url)
-        request.timeoutInterval = 20
+        request.timeoutInterval = 30
         request.setValue("application/geo+json", forHTTPHeaderField: "Accept")
         request.setValue(
             "LocalCompanion/1.0 (student hyperlocal news research app)",
             forHTTPHeaderField: "User-Agent"
         )
 
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await URLSession.shared.data(for: request)
-        } catch {
-            throw WeatherServiceError.serverUnavailable
-        }
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            throw WeatherServiceError.serverUnavailable
+        for attempt in 0..<max(attempts, 1) {
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse,
+                      (200...299).contains(httpResponse.statusCode) else {
+                    throw WeatherServiceError.serverUnavailable
+                }
+                return try JSONDecoder().decode(Response.self, from: data)
+            } catch {
+                if attempt == max(attempts, 1) - 1 {
+                    if error is DecodingError {
+                        throw WeatherServiceError.invalidResponse
+                    }
+                    throw WeatherServiceError.serverUnavailable
+                }
+            }
         }
 
-        do {
-            return try JSONDecoder().decode(Response.self, from: data)
-        } catch {
-            throw WeatherServiceError.invalidResponse
-        }
+        throw WeatherServiceError.serverUnavailable
     }
 }
 
@@ -741,15 +774,15 @@ private struct LatestObservation {
 }
 
 private struct ObservationProperties: Decodable {
-    let timestamp: String
-    let textDescription: String
-    let temperature: ObservationValue
-    let windSpeed: ObservationValue
-    let windGust: ObservationValue
-    let windDirection: ObservationValue
+    let timestamp: String?
+    let textDescription: String?
+    let temperature: ObservationValue?
+    let windSpeed: ObservationValue?
+    let windGust: ObservationValue?
+    let windDirection: ObservationValue?
 }
 
 private struct ObservationValue: Decodable {
-    let unitCode: String
+    let unitCode: String?
     let value: Double?
 }
