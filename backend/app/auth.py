@@ -8,6 +8,10 @@ import httpx
 from fastapi import Header, HTTPException, status
 
 
+DEFAULT_SUPABASE_URL = "https://rajxtpjbwhcilvwyvrkz.supabase.co"
+DEFAULT_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_LYt5UDCkuktF5D7chsiWIA_AQanjNQT"
+
+
 @dataclass(frozen=True)
 class AuthenticatedUser:
     id: str
@@ -15,10 +19,17 @@ class AuthenticatedUser:
 
 
 def auth_is_configured() -> bool:
-    return bool(
-        os.getenv("SUPABASE_URL", "").strip()
-        and os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip()
-    )
+    project_url, publishable_key = _supabase_settings()
+    return bool(project_url and publishable_key)
+
+
+def _supabase_settings() -> tuple[str, str]:
+    project_url = os.getenv("SUPABASE_URL", DEFAULT_SUPABASE_URL).strip().rstrip("/")
+    publishable_key = os.getenv(
+        "SUPABASE_PUBLISHABLE_KEY",
+        DEFAULT_SUPABASE_PUBLISHABLE_KEY,
+    ).strip()
+    return project_url, publishable_key
 
 
 def _bearer_token(authorization: str | None) -> str:
@@ -44,8 +55,7 @@ async def verify_supabase_token(
     *,
     client: httpx.AsyncClient | None = None,
 ) -> AuthenticatedUser:
-    project_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
-    publishable_key = os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip()
+    project_url, publishable_key = _supabase_settings()
     if not project_url or not publishable_key:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
