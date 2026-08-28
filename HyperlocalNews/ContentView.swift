@@ -62,27 +62,32 @@ struct MainAppView: View {
                 HStack(spacing: 0) {
                     Color.clear
                         .contentShape(Rectangle())
-                        .frame(width: 22)
+                        .frame(width: 28)
                         .gesture(
                             DragGesture(minimumDistance: 18)
                                 .onEnded { value in
-                                    guard value.translation.width > 55 else { return }
-                                    moveTab(by: -1)
+                                    handleVerticalTabSwipe(value.translation)
                                 }
                         )
 
                     Spacer(minLength: 0)
 
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .frame(width: 22)
+                    ZStack {
+                        Color.clear
+                            .contentShape(Rectangle())
+
+                        Capsule()
+                            .fill(.secondary.opacity(0.28))
+                            .frame(width: 4, height: 42)
+                    }
+                        .frame(width: 28)
                         .gesture(
                             DragGesture(minimumDistance: 18)
                                 .onEnded { value in
-                                    guard value.translation.width < -55 else { return }
-                                    moveTab(by: 1)
+                                    handleVerticalTabSwipe(value.translation)
                                 }
                         )
+                        .accessibilityLabel("Swipe up or down to change tabs")
                 }
                 .ignoresSafeArea(.container, edges: .vertical)
             }
@@ -127,6 +132,17 @@ struct MainAppView: View {
         withAnimation(.easeInOut(duration: 0.22)) {
             selectedTab = tabs[destinationIndex]
         }
+    }
+
+    private func handleVerticalTabSwipe(_ translation: CGSize) {
+        guard abs(translation.height) > 55,
+              abs(translation.height) > abs(translation.width) * 1.2 else {
+            return
+        }
+
+        // Up advances through Home → Chat → Map → Events → Profile.
+        // Down moves in the opposite direction.
+        moveTab(by: translation.height < 0 ? 1 : -1)
     }
 }
 
