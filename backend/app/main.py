@@ -1,8 +1,14 @@
 from fastapi import Depends, FastAPI
 
-from .auth import AuthenticatedUser, auth_is_configured, authorize_chat_request
+from .auth import (
+    AuthenticatedUser,
+    auth_is_configured,
+    authorize_chat_request,
+    authorize_routing_request,
+)
 from .gemini import GeminiService, GeminiServiceError
-from .schemas import AskRequest, AskResponse
+from .router import local_route, should_use_gemini
+from .schemas import AskRequest, AskResponse, RouteRequest, RouteResponse
 
 
 app = FastAPI(
@@ -65,3 +71,14 @@ async def ask(
             evidence_checked=[item.title for item in request.evidence],
             save_for_journalist=False,
         )
+
+
+@app.post("/route", response_model=RouteResponse)
+async def route_question(
+    request: RouteRequest,
+    _user: AuthenticatedUser = Depends(authorize_routing_request),
+) -> RouteResponse:
+    route = local_route(request)
+    if should_use_gemini(route):
+        return await GeminiService().route(request, route)
+    return route

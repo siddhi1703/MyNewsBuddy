@@ -1176,56 +1176,51 @@ private struct ChatView: View {
         question = ""
         isLoading = true
 
-        if needsTransitLocationClarification(submittedQuestion) {
-            let clarification = ChatMessage(
-                role: .assistant,
-                text: "I can help with that. Which city, address, or landmark should I check? For Greater Boston, you can also open the Map tab, search an address, and tap a nearby MBTA stop for live arrivals.",
-                state: nil,
-                source: nil,
-                sourceURL: nil
-            )
-            messages.append(clarification)
-            persistAssistant(clarification, after: persistenceTask)
-            isLoading = false
-            return
-        }
-
         Task { @MainActor in
-            let weatherWords = [
-                "weather", "forecast", "rain", "temperature", "temp", "sunny",
-                "snow", "wind", "windy", "breeze", "umbrella", "precipitation",
-                "outside", "tomorrow", "tonight", "cloud", "hot", "cold"
-            ]
-            let isWeatherQuestion = weatherWords.contains {
-                submittedQuestion.localizedCaseInsensitiveContains($0)
+            let routing: ChatRoutingDecision
+            do {
+                routing = try await chatService.route(
+                    question: submittedQuestion,
+                    location: weather.isLive ? weather.location : nil,
+                    history: conversationContext
+                )
+            } catch {
+                let routeError = ChatMessage(
+                    role: .assistant,
+                    text: "I couldn’t determine which trusted local sources to check. Please try again in a moment.",
+                    state: .serviceUnavailable,
+                    source: nil,
+                    sourceURL: nil
+                )
+                messages.append(routeError)
+                persistAssistant(routeError, after: persistenceTask)
+                isLoading = false
+                return
             }
-            let transitWords = [
-                "mbta", "transit", "subway", "train", "bus", "commuter rail",
-                "ferry", "green line", "red line", "orange line", "blue line",
-                "silver line", "mattapan", "station", "service alert", "delayed",
-                "delay"
-            ]
-            let isTransitQuestion = transitWords.contains {
-                submittedQuestion.localizedCaseInsensitiveContains($0)
+
+            if routing.needsClarification {
+                let clarification = ChatMessage(
+                    role: .assistant,
+                    text: routing.clarificationQuestion
+                        ?? "Could you share the city, agency, route, or institution you mean?",
+                    state: .clarification,
+                    source: nil,
+                    sourceURL: nil
+                )
+                messages.append(clarification)
+                persistAssistant(clarification, after: persistenceTask)
+                isLoading = false
+                return
             }
-            let arrivalWords = [
-                "next", "arrive", "arrival", "departure", "depart", "leave",
-                "schedule", "when is", "how long until"
-            ]
-            let isArrivalQuestion = isTransitQuestion && arrivalWords.contains {
-                submittedQuestion.localizedCaseInsensitiveContains($0)
-            }
-            let normalizedQuestion = submittedQuestion.lowercased()
-            let transitStatusWords = [
-                "delay", "delayed", "service alert", "disruption",
-                "problem", "not running", "closed", "closure"
-            ]
-            let asksAboutTransitStatus = transitStatusWords.contains {
-                normalizedQuestion.contains($0)
-            }
+
+            let selectedSources = Set(routing.sources)
+            let isWeatherQuestion = selectedSources.contains("nws")
+            let isArrivalQuestion = selectedSources.contains("mbta_predictions")
+            let asksAboutTransitStatus = selectedSources.contains("mbta_alerts")
             var trustedWeather: WeatherSnapshot?
             var trustedTransit: MBTAAlertsSnapshot?
             var trustedArrivals: MBTAArrivalsSnapshot?
+            var retrievalAttempts: [ChatRetrievalAttempt] = []
 
             if let routeRequest = requestedTransitRoute(in: submittedQuestion) {
                 do {
@@ -1255,7 +1250,16 @@ private struct ChatView: View {
                                 weather: nil,
                                 transit: alerts,
                                 arrivals: nil,
-                                history: conversationContext
+                                history: conversationContext,
+                                routing: routing,
+                                retrievalAttempts: [
+                                    ChatRetrievalAttempt(
+                                        sourceID: "mbta_alerts",
+                                        status: .succeeded,
+                                        evidenceCount: 1,
+                                        detail: nil
+                                    )
+                                ]
                             )
                             let citation = response.citations.first
                             answer = response.answer + "\n\nFor the current fastest route, tap below to compare live public-transit options in Apple Maps."
@@ -1295,9 +1299,10 @@ private struct ChatView: View {
             }
 
             if isWeatherQuestion {
-                let requestedCity = requestedCity(in: submittedQuestion)
+                let requestedCity = routing.location ?? requestedCity(in: submittedQuestion)
 
-                if let requestedCity {
+                if let requestedCity,
+                   requestedCity.localizedCaseInsensitiveCompare(weather.location) != .orderedSame {
                     do {
                         let cityWeather = try await model.weather(forCity: requestedCity)
                         trustedWeather = cityWeather
@@ -1334,56 +1339,100 @@ private struct ChatView: View {
                     isLoading = false
                     return
                 }
+                retrievalAttempts.append(
+                    ChatRetrievalAttempt(
+                        sourceID: "nws",
+                        status: .succeeded,
+                        evidenceCount: 1,
+                        detail: nil
+                    )
+                )
             }
 
-            if isTransitQuestion {
+            if isArrivalQuestion {
                 do {
-                    if isArrivalQuestion {
-                        let arrivalLocation: ResolvedMapLocation
-                        if let origin = requestedTransitOrigin(in: submittedQuestion) {
-                            arrivalLocation = try await model.resolvePlace(origin)
-                        } else if let coordinate = model.mapCoordinate {
-                            arrivalLocation = ResolvedMapLocation(
-                                coordinate: coordinate,
-                                displayName: weather.location
-                            )
-                        } else {
-                            let clarification = ChatMessage(
-                                role: .assistant,
-                                text: "Which Boston-area address or station should I check for the next arrival?",
-                                state: nil,
-                                source: nil,
-                                sourceURL: nil
-                            )
-                            messages.append(clarification)
-                            persistAssistant(clarification, after: persistenceTask)
-                            isLoading = false
-                            return
-                        }
-
-                        trustedArrivals = try await transitService.arrivals(
-                            near: arrivalLocation.coordinate,
-                            locationName: arrivalLocation.displayName,
-                            question: submittedQuestion
+                    let arrivalLocation: ResolvedMapLocation
+                    if let origin = requestedTransitOrigin(in: submittedQuestion) {
+                        arrivalLocation = try await model.resolvePlace(origin)
+                    } else if let coordinate = model.mapCoordinate {
+                        arrivalLocation = ResolvedMapLocation(
+                            coordinate: coordinate,
+                            displayName: weather.location
                         )
                     } else {
-                        trustedTransit = try await transitService.alerts(for: submittedQuestion)
+                        let clarification = ChatMessage(
+                            role: .assistant,
+                            text: "Which Boston-area address or station should I check for the next arrival?",
+                            state: nil,
+                            source: nil,
+                            sourceURL: nil
+                        )
+                        messages.append(clarification)
+                        persistAssistant(clarification, after: persistenceTask)
+                        isLoading = false
+                        return
                     }
-                } catch {
-                    let errorMessage = ChatMessage(
-                        role: .assistant,
-                        text: isArrivalQuestion
-                            ? "I couldn’t find that starting location or load its live MBTA arrivals. Try a complete address such as “390 Riverway, Boston, MA.”"
-                            : error.localizedDescription,
-                        state: .setup,
-                        source: nil,
-                        sourceURL: nil
+
+                    trustedArrivals = try await transitService.arrivals(
+                        near: arrivalLocation.coordinate,
+                        locationName: arrivalLocation.displayName,
+                        question: submittedQuestion
                     )
-                    messages.append(errorMessage)
-                    persistAssistant(errorMessage, after: persistenceTask)
-                    isLoading = false
-                    return
+                    retrievalAttempts.append(
+                        ChatRetrievalAttempt(
+                            sourceID: "mbta_predictions",
+                            status: .succeeded,
+                            evidenceCount: 1,
+                            detail: nil
+                        )
+                    )
+                } catch {
+                    retrievalAttempts.append(
+                        ChatRetrievalAttempt(
+                            sourceID: "mbta_predictions",
+                            status: .failed,
+                            evidenceCount: 0,
+                            detail: error.localizedDescription
+                        )
+                    )
                 }
+            }
+
+            if asksAboutTransitStatus {
+                do {
+                    trustedTransit = try await transitService.alerts(for: submittedQuestion)
+                    retrievalAttempts.append(
+                        ChatRetrievalAttempt(
+                            sourceID: "mbta_alerts",
+                            status: .succeeded,
+                            evidenceCount: 1,
+                            detail: nil
+                        )
+                    )
+                } catch {
+                    retrievalAttempts.append(
+                        ChatRetrievalAttempt(
+                            sourceID: "mbta_alerts",
+                            status: .failed,
+                            evidenceCount: 0,
+                            detail: error.localizedDescription
+                        )
+                    )
+                }
+            }
+
+            let connectedSources: Set<String> = [
+                "nws", "mbta_alerts", "mbta_predictions"
+            ]
+            for source in selectedSources.subtracting(connectedSources) {
+                retrievalAttempts.append(
+                    ChatRetrievalAttempt(
+                        sourceID: source,
+                        status: .notConnected,
+                        evidenceCount: 0,
+                        detail: "This trusted source is not connected yet."
+                    )
+                )
             }
 
             do {
@@ -1399,7 +1448,9 @@ private struct ChatView: View {
                     transit: trustedTransit,
                     arrivals: trustedArrivals,
                     journalistAnswers: publishedJournalistAnswers,
-                    history: conversationContext
+                    history: conversationContext,
+                    routing: routing,
+                    retrievalAttempts: retrievalAttempts
                 )
                 let answerID = UUID()
                 let citation = response.citations.first
@@ -1522,37 +1573,6 @@ private struct ChatView: View {
         } catch {
             communityResponseError = error.localizedDescription
         }
-    }
-
-    private func needsTransitLocationClarification(_ submittedQuestion: String) -> Bool {
-        let normalized = submittedQuestion.lowercased()
-        let broadTransitPhrases = [
-            "public transport", "public transportation", "transport available",
-            "nearby transit", "nearest station", "closest station",
-            "nearest bus", "closest bus"
-        ]
-        guard broadTransitPhrases.contains(where: normalized.contains) else {
-            return false
-        }
-
-        let specificTransitTerms = [
-            "mbta", "green line", "red line", "orange line", "blue line",
-            "silver line", "mattapan", "commuter rail"
-        ]
-        if specificTransitTerms.contains(where: normalized.contains) {
-            return false
-        }
-
-        // A street number usually means the user supplied a usable address.
-        if normalized.range(of: #"\b\d{1,6}\b"#, options: .regularExpression) != nil {
-            return false
-        }
-
-        let recognizedPlaces = [
-            "boston", "brookline", "cambridge", "somerville", "newton",
-            "quincy", "medford", "malden", "revere", "san francisco"
-        ]
-        return !recognizedPlaces.contains(where: normalized.contains)
     }
 
     private func requestedTransitOrigin(in submittedQuestion: String) -> String? {

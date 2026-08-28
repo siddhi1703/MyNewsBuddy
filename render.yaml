@@ -20,3 +20,5 @@ services:
         value: sb_publishable_LYt5UDCkuktF5D7chsiWIA_AQanjNQT
       - key: CHAT_REQUESTS_PER_MINUTE
         value: 10
+      - key: ROUTING_REQUESTS_PER_MINUTE
+        value: 20

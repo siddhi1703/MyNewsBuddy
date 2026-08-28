@@ -12,9 +12,12 @@ AnswerStatus = Literal[
     "source_unavailable",
 ]
 AnswerOutcome = Literal["answered", "true_gap", "out_of_scope", "system_miss"]
+RetrievalStatus = Literal["succeeded", "failed", "not_connected"]
+RoutingMethod = Literal["rules", "local_nlp", "gemini"]
 QuestionCategory = Literal[
     "weather",
     "transit",
+    "civic_services",
     "housing",
     "public_safety",
     "local_news",
@@ -36,11 +39,38 @@ class EvidenceItem(BaseModel):
     retrieved_at: str | None = Field(default=None, max_length=100)
 
 
+class RetrievalAttempt(BaseModel):
+    source_id: str = Field(min_length=1, max_length=80)
+    status: RetrievalStatus
+    evidence_count: int = Field(default=0, ge=0, le=1_000)
+    detail: str | None = Field(default=None, max_length=500)
+
+
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2_000)
     location: str | None = Field(default=None, max_length=200)
     evidence: list[EvidenceItem] = Field(default_factory=list, max_length=20)
     history: list[ChatHistoryItem] = Field(default_factory=list, max_length=20)
+    required_sources: list[str] = Field(default_factory=list, max_length=10)
+    retrieval_attempts: list[RetrievalAttempt] = Field(default_factory=list, max_length=20)
+    routing_method: RoutingMethod | None = None
+
+
+class RouteRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2_000)
+    location: str | None = Field(default=None, max_length=200)
+    history: list[ChatHistoryItem] = Field(default_factory=list, max_length=20)
+
+
+class RouteResponse(BaseModel):
+    category: QuestionCategory
+    sources: list[str] = Field(default_factory=list, max_length=10)
+    location: str | None = Field(default=None, max_length=200)
+    needs_clarification: bool = False
+    clarification_question: str | None = Field(default=None, max_length=500)
+    out_of_scope: bool = False
+    confidence: float = Field(ge=0, le=1)
+    method: RoutingMethod
 
 
 class Citation(BaseModel):
@@ -65,3 +95,13 @@ class ModelAnswer(BaseModel):
     category: QuestionCategory
     confidence: float = Field(ge=0, le=1)
     citation_source_ids: list[str] = Field(default_factory=list, max_length=10)
+
+
+class ModelRoute(BaseModel):
+    category: QuestionCategory
+    sources: list[str] = Field(default_factory=list, max_length=10)
+    location: str | None = Field(default=None, max_length=200)
+    needs_clarification: bool = False
+    clarification_question: str | None = Field(default=None, max_length=500)
+    out_of_scope: bool = False
+    confidence: float = Field(ge=0, le=1)

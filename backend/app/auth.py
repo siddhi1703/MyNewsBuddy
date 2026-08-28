@@ -124,12 +124,17 @@ async def require_authenticated_user(
 
 
 class PerUserRateLimiter:
-    def __init__(self) -> None:
+    def __init__(self, environment_key: str, default_limit: int) -> None:
+        self.environment_key = environment_key
+        self.default_limit = default_limit
         self._requests: dict[str, deque[float]] = defaultdict(deque)
         self._lock = asyncio.Lock()
 
     async def check(self, user_id: str) -> None:
-        limit = max(1, int(os.getenv("CHAT_REQUESTS_PER_MINUTE", "10")))
+        limit = max(
+            1,
+            int(os.getenv(self.environment_key, str(self.default_limit))),
+        )
         window_seconds = 60.0
         now = time.monotonic()
 
@@ -152,7 +157,8 @@ class PerUserRateLimiter:
             requests.append(now)
 
 
-chat_rate_limiter = PerUserRateLimiter()
+chat_rate_limiter = PerUserRateLimiter("CHAT_REQUESTS_PER_MINUTE", 10)
+routing_rate_limiter = PerUserRateLimiter("ROUTING_REQUESTS_PER_MINUTE", 20)
 
 
 async def authorize_chat_request(
@@ -160,4 +166,12 @@ async def authorize_chat_request(
 ) -> AuthenticatedUser:
     user = await require_authenticated_user(authorization)
     await chat_rate_limiter.check(user.id)
+    return user
+
+
+async def authorize_routing_request(
+    authorization: str | None = Header(default=None),
+) -> AuthenticatedUser:
+    user = await require_authenticated_user(authorization)
+    await routing_rate_limiter.check(user.id)
     return user

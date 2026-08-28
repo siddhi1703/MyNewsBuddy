@@ -1,9 +1,17 @@
 # Local Companion FastAPI backend
 
 This backend is the only component allowed to hold the Gemini API key. The iOS
-application sends the user question and already-retrieved trusted evidence to
-`POST /ask`. Gemini writes a friendly response, while the backend enforces that
-an answered response contains at least one valid evidence citation.
+application first sends the question to authenticated `POST /route`. A hybrid
+router uses deterministic safety rules, local NLP similarity, and Gemini only
+for ambiguous intent to select the trusted sources that must be searched. The
+iOS app retrieves those sources and sends the question, evidence, and retrieval
+audit to `POST /ask`.
+
+Gemini writes a friendly response, while the backend enforces two research
+rules: an answered response must contain a valid evidence citation, and a model
+abstention can become a journalism gap only when every required source was
+successfully retrieved with matching evidence. Failed or unconnected sources
+produce a `system_miss`, not a record in the Journalist Inbox.
 
 ## Run locally
 

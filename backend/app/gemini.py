@@ -5,7 +5,16 @@ from datetime import datetime, timezone
 
 import httpx
 
-from .schemas import AskRequest, AskResponse, Citation, ModelAnswer
+from .router import validated_model_route
+from .schemas import (
+    AskRequest,
+    AskResponse,
+    Citation,
+    ModelAnswer,
+    ModelRoute,
+    RouteRequest,
+    RouteResponse,
+)
 
 
 SYSTEM_PROMPT = """
@@ -64,6 +73,10 @@ Rules:
     labeled "Latest station observation" when present. Do not replace those
     measured values with an hourly or daily forecast. Forecast-only fields, such
     as precipitation chance, must be described as forecast values.
+18. The request includes REQUIRED SOURCES and RETRIEVAL ATTEMPTS. If a required
+    source failed or is not connected, use status "source_unavailable", never
+    "abstained". A potential journalism gap is possible only after every required
+    source was successfully checked and still did not answer the question.
 """.strip()
 
 
@@ -87,6 +100,7 @@ RESPONSE_SCHEMA = {
             "enum": [
                 "weather",
                 "transit",
+                "civic_services",
                 "housing",
                 "public_safety",
                 "local_news",
@@ -109,6 +123,76 @@ RESPONSE_SCHEMA = {
         "citation_source_ids",
     ],
     "additionalProperties": False,
+}
+
+
+ROUTER_PROMPT = """
+You route questions for a hyperlocal civic-journalism companion. Return JSON only.
+Do not answer the question and do not invent facts.
+
+Select only from these trusted-source identifiers:
+- nws: current conditions and forecasts
+- mbta_alerts: Greater Boston transit alerts and disruptions
+- mbta_predictions: Greater Boston live arrivals
+- boston_311: Boston service requests and complaints
+- local_news: verified local reporting
+- university_events: official university calendars and events
+
+Use meaning and conversation context, not isolated keywords. Select multiple sources
+when a premise needs cross-checking. Weather wording such as needing an umbrella maps
+to nws. Repeated flooding, potholes, trash, streetlights, or unresolved complaints map
+to boston_311 and local_news. Transit arrivals map to mbta_predictions; disruptions map
+to mbta_alerts. Restaurant rankings, shopping, personal preferences, general homework,
+and navigation directions are out of scope.
+
+Extract an explicitly named city and state. If a required city, agency, institution,
+route, or neighborhood is ambiguous, set needs_clarification and ask one short question.
+Never classify missing source coverage as a journalism gap; this call only routes.
+""".strip()
+
+
+ROUTE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "category": {
+            "type": "string",
+            "enum": [
+                "weather", "transit", "civic_services", "housing",
+                "public_safety", "local_news", "events", "other",
+            ],
+        },
+        "sources": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "enum": [
+                    "nws", "mbta_alerts", "mbta_predictions", "boston_311",
+                    "local_news", "university_events",
+                ],
+            },
+            "maxItems": 6,
+        },
+        "location": {"type": ["string", "null"]},
+        "needs_clarification": {"type": "boolean"},
+        "clarification_question": {"type": ["string", "null"]},
+        "out_of_scope": {"type": "boolean"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    },
+    "required": [
+        "category", "sources", "location", "needs_clarification",
+        "clarification_question", "out_of_scope", "confidence",
+    ],
+    "additionalProperties": False,
+}
+
+
+SOURCE_EVIDENCE_PREFIXES = {
+    "nws": ("nws-",),
+    "mbta_alerts": ("mbta-alerts",),
+    "mbta_predictions": ("mbta-predictions",),
+    "boston_311": ("boston-311",),
+    "local_news": ("local-news", "journalist-response-"),
+    "university_events": ("university-events",),
 }
 
 
@@ -157,6 +241,10 @@ class GeminiService:
                 for item in request.history[-20:]
             ],
             "trusted_evidence": evidence_payload,
+            "required_sources": request.required_sources,
+            "retrieval_attempts": [
+                item.model_dump() for item in request.retrieval_attempts
+            ],
         }
 
         payload = {
@@ -223,6 +311,62 @@ class GeminiService:
                 raise last_error from error
 
         raise last_error or GeminiServiceError("Could not reach Gemini.")
+
+    async def route(
+        self,
+        request: RouteRequest,
+        fallback: RouteResponse,
+    ) -> RouteResponse:
+        if not self.is_configured:
+            return fallback
+
+        user_payload = {
+            "question": request.question,
+            "location_context": request.location,
+            "conversation_history": [
+                {"role": item.role, "content": item.content}
+                for item in request.history[-12:]
+            ],
+            "local_nlp_preliminary_route": fallback.model_dump(),
+        }
+        payload = {
+            "systemInstruction": {"parts": [{"text": ROUTER_PROMPT}]},
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": json.dumps(user_payload, ensure_ascii=False)}],
+                }
+            ],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseJsonSchema": ROUTE_SCHEMA,
+                "maxOutputTokens": 800,
+                "temperature": 0,
+            },
+        }
+        url = f"{self.base_url}/models/{self.model}:generateContent"
+
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.post(
+                    url,
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-goog-api-key": self.api_key,
+                    },
+                    json=payload,
+                )
+        except httpx.HTTPError:
+            return fallback
+
+        if response.status_code >= 400:
+            return fallback
+
+        try:
+            model_route = _parse_model_route(response.json())
+        except (KeyError, IndexError, TypeError, ValueError):
+            return fallback
+        return validated_model_route(model_route, fallback)
 
 
 def _research_quality_guardrail(request: AskRequest) -> AskResponse | None:
@@ -294,6 +438,14 @@ def _parse_model_answer(provider_response: object) -> ModelAnswer:
     Accepting those harmless variations prevents a valid answer from appearing
     in the app as an "invalid response" error.
     """
+    return ModelAnswer.model_validate_json(_provider_text(provider_response))
+
+
+def _parse_model_route(provider_response: object) -> ModelRoute:
+    return ModelRoute.model_validate_json(_provider_text(provider_response))
+
+
+def _provider_text(provider_response: object) -> str:
     if not isinstance(provider_response, dict):
         raise ValueError("Provider response is not an object.")
 
@@ -324,7 +476,7 @@ def _parse_model_answer(provider_response: object) -> ModelAnswer:
 
     if not text:
         raise ValueError("Provider candidate contains no text.")
-    return ModelAnswer.model_validate_json(text)
+    return text
 
 
 def _grounded_response(model_answer: ModelAnswer, request: AskRequest) -> AskResponse:
@@ -356,6 +508,36 @@ def _grounded_response(model_answer: ModelAnswer, request: AskRequest) -> AskRes
     if status != "answered":
         valid_ids = []
 
+    required_sources = set(request.required_sources)
+    evidence_ids = {item.source_id for item in request.evidence}
+    successful_sources = {
+        attempt.source_id
+        for attempt in request.retrieval_attempts
+        if attempt.status == "succeeded"
+        and _has_evidence_for_source(attempt.source_id, evidence_ids)
+    }
+    unavailable_sources = required_sources - successful_sources
+
+    # A model abstention is not automatically a reporting lead. The backend
+    # requires auditable proof that every source selected by the router was
+    # successfully queried. Missing routing metadata or a failed/unconnected
+    # source is an engineering/source-coverage miss.
+    if status == "abstained" and (not required_sources or unavailable_sources):
+        status = "source_unavailable"
+        confidence = 0
+        if unavailable_sources:
+            source_list = ", ".join(sorted(unavailable_sources))
+            answer = (
+                "I couldn’t complete all of the trusted-source checks required "
+                f"for this question ({source_list}). This is a system or source-"
+                "coverage issue, so I won’t label it as a journalism gap."
+            )
+        else:
+            answer = (
+                "I couldn’t identify and verify the trusted sources required for "
+                "this question. I won’t label it as a journalism gap."
+            )
+
     if status == "answered":
         outcome = "answered"
     elif status in {"out_of_scope", "conversational", "needs_clarification"}:
@@ -369,6 +551,12 @@ def _grounded_response(model_answer: ModelAnswer, request: AskRequest) -> AskRes
         Citation(title=evidence_by_id[source_id].title, url=evidence_by_id[source_id].url)
         for source_id in valid_ids
     ]
+    evidence_checked = [item.title for item in request.evidence]
+    evidence_checked.extend(
+        f"{attempt.source_id}: {attempt.status}"
+        for attempt in request.retrieval_attempts
+        if f"{attempt.source_id}: {attempt.status}" not in evidence_checked
+    )
     return AskResponse(
         answer=answer,
         status=status,
@@ -376,8 +564,17 @@ def _grounded_response(model_answer: ModelAnswer, request: AskRequest) -> AskRes
         category=model_answer.category,
         confidence=confidence,
         citations=citations,
-        evidence_checked=[item.title for item in request.evidence],
+        evidence_checked=evidence_checked,
         save_for_journalist=outcome == "true_gap",
+    )
+
+
+def _has_evidence_for_source(source_id: str, evidence_ids: set[str]) -> bool:
+    prefixes = SOURCE_EVIDENCE_PREFIXES.get(source_id, (source_id,))
+    return any(
+        evidence_id.startswith(prefix)
+        for evidence_id in evidence_ids
+        for prefix in prefixes
     )
 
 

@@ -22,6 +22,11 @@ An iOS SwiftUI prototype for asking local questions and receiving concise answer
   evidence but does not generate template-based weather or MBTA chat answers
 - FastAPI security boundary so the Gemini key never ships inside the iOS app
 - Supabase-authenticated `/ask` requests with per-user burst rate limiting
+- Authenticated hybrid NLP source routing using rules, semantic intent examples,
+  entity/location extraction, and Gemini fallback for ambiguous questions
+- Auditable required-source and retrieval-attempt metadata on every AI request
+- Backend enforcement preventing failed or unconnected source checks from being
+  saved as journalism information gaps
 - Clickable Weather.gov citations verified by the backend
 - Honest “I don’t know yet” responses for unsupported local questions
 - Supabase unanswered-question logging for journalist review

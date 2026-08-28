@@ -10,11 +10,19 @@ from app.auth import (
     AuthenticatedUser,
     PerUserRateLimiter,
     authorize_chat_request,
+    authorize_routing_request,
     verify_supabase_token,
 )
 from app.gemini import _grounded_response, _parse_model_answer
 from app.main import app
-from app.schemas import AskRequest, EvidenceItem, ModelAnswer
+from app.router import local_route
+from app.schemas import (
+    AskRequest,
+    EvidenceItem,
+    ModelAnswer,
+    RetrievalAttempt,
+    RouteRequest,
+)
 
 
 class GroundingTests(unittest.TestCase):
@@ -23,6 +31,7 @@ class GroundingTests(unittest.TestCase):
             return AuthenticatedUser(id="test-user", email="reader@example.com")
 
         app.dependency_overrides[authorize_chat_request] = authenticated_user
+        app.dependency_overrides[authorize_routing_request] = authenticated_user
         self.evidence = EvidenceItem(
             source_id="nws-forecast",
             title="National Weather Service forecast for Boston, MA",
@@ -56,7 +65,7 @@ class GroundingTests(unittest.TestCase):
         self.assertEqual(len(response.citations), 1)
         self.assertIn("National Weather Service", response.citations[0].title)
 
-    def test_unsupported_answer_is_forced_to_abstain(self) -> None:
+    def test_unsupported_answer_without_retrieval_is_a_system_miss(self) -> None:
         request = AskRequest(question="Why is the Green Line delayed?")
         model_answer = ModelAnswer(
             answer="A signal problem caused the delay.",
@@ -68,12 +77,78 @@ class GroundingTests(unittest.TestCase):
 
         response = _grounded_response(model_answer, request)
 
+        self.assertEqual(response.status, "source_unavailable")
+        self.assertEqual(response.outcome, "system_miss")
+        self.assertFalse(response.save_for_journalist)
+        self.assertEqual(response.confidence, 0)
+        self.assertEqual(response.citations, [])
+        self.assertIn("won’t label it as a journalism gap", response.answer)
+
+    def test_abstention_becomes_true_gap_only_after_required_source_succeeds(self) -> None:
+        request = AskRequest(
+            question="Why are Green Line delays repeatedly affecting Mission Hill?",
+            evidence=[
+                EvidenceItem(
+                    source_id="mbta-alerts",
+                    title="MBTA Green Line alerts",
+                    url="https://www.mbta.com/alerts/subway",
+                    text="No matching active official alert was found.",
+                    retrieved_at="2026-08-28T12:00:00Z",
+                )
+            ],
+            required_sources=["mbta_alerts"],
+            retrieval_attempts=[
+                RetrievalAttempt(
+                    source_id="mbta_alerts",
+                    status="succeeded",
+                    evidence_count=1,
+                )
+            ],
+        )
+        model_answer = ModelAnswer(
+            answer="The official alert feed does not explain the repeated pattern.",
+            status="abstained",
+            category="transit",
+            confidence=0.8,
+            citation_source_ids=[],
+        )
+
+        response = _grounded_response(model_answer, request)
+
         self.assertEqual(response.status, "abstained")
         self.assertEqual(response.outcome, "true_gap")
         self.assertTrue(response.save_for_journalist)
-        self.assertEqual(response.confidence, 0)
-        self.assertEqual(response.citations, [])
-        self.assertIn("don’t want to guess", response.answer)
+
+    def test_failed_required_source_cannot_become_true_gap(self) -> None:
+        request = AskRequest(
+            question="Why are flooding complaints increasing near Riverway?",
+            required_sources=["boston_311", "local_news"],
+            retrieval_attempts=[
+                RetrievalAttempt(
+                    source_id="boston_311",
+                    status="not_connected",
+                    detail="Source is not connected.",
+                ),
+                RetrievalAttempt(
+                    source_id="local_news",
+                    status="not_connected",
+                    detail="Source is not connected.",
+                ),
+            ],
+        )
+        model_answer = ModelAnswer(
+            answer="This may be an information gap.",
+            status="abstained",
+            category="civic_services",
+            confidence=0.7,
+            citation_source_ids=[],
+        )
+
+        response = _grounded_response(model_answer, request)
+
+        self.assertEqual(response.status, "source_unavailable")
+        self.assertEqual(response.outcome, "system_miss")
+        self.assertFalse(response.save_for_journalist)
 
     def test_non_civic_question_is_out_of_scope_not_a_gap(self) -> None:
         request = AskRequest(question="What is the best pizza topping?")
@@ -241,6 +316,59 @@ class GroundingTests(unittest.TestCase):
         self.assertEqual(len(response.citations), 1)
         self.assertIn("MBTA", response.citations[0].title)
 
+    def test_route_endpoint_understands_umbrella_without_weather_keyword(self) -> None:
+        response = TestClient(app).post(
+            "/route",
+            json={
+                "question": "Should I carry an umbrella tomorrow?",
+                "location": "Boston, MA",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["category"], "weather")
+        self.assertEqual(response.json()["sources"], ["nws"])
+        self.assertFalse(response.json()["needs_clarification"])
+
+    def test_route_requires_a_signed_in_user(self) -> None:
+        app.dependency_overrides.pop(authorize_routing_request, None)
+        response = TestClient(app).post(
+            "/route",
+            json={"question": "Should I carry an umbrella tomorrow?"},
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("Sign in", response.json()["detail"])
+
+
+class RoutingTests(unittest.TestCase):
+    def test_flooding_accountability_uses_311_and_local_news(self) -> None:
+        route = local_route(
+            RouteRequest(
+                question=(
+                    "Why are flooding complaints increasing near Riverway "
+                    "in Boston, MA?"
+                )
+            )
+        )
+
+        self.assertEqual(route.category, "civic_services")
+        self.assertEqual(route.sources, ["boston_311", "local_news"])
+
+    def test_restaurant_ranking_is_out_of_scope(self) -> None:
+        route = local_route(RouteRequest(question="What is the best pizza in Boston?"))
+
+        self.assertTrue(route.out_of_scope)
+        self.assertEqual(route.sources, [])
+
+    def test_ambiguous_academic_calendar_question_asks_for_school(self) -> None:
+        route = local_route(
+            RouteRequest(question="When do fall classes start in Boston?")
+        )
+
+        self.assertTrue(route.needs_clarification)
+        self.assertIn("school or university", route.clarification_question)
+
 
 class AuthenticationTests(unittest.IsolatedAsyncioTestCase):
     async def test_valid_supabase_session_returns_user(self) -> None:
@@ -279,7 +407,7 @@ class AuthenticationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context.exception.status_code, 401)
 
     async def test_per_user_rate_limit_rejects_burst(self) -> None:
-        limiter = PerUserRateLimiter()
+        limiter = PerUserRateLimiter("CHAT_REQUESTS_PER_MINUTE", 10)
         with patch.dict(os.environ, {"CHAT_REQUESTS_PER_MINUTE": "2"}):
             await limiter.check("user-123")
             await limiter.check("user-123")

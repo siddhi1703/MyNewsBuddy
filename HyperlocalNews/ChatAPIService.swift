@@ -30,6 +30,30 @@ struct ChatAPIHistoryMessage: Encodable {
     let content: String
 }
 
+struct ChatRoutingDecision: Decodable {
+    let category: String
+    let sources: [String]
+    let location: String?
+    let needsClarification: Bool
+    let clarificationQuestion: String?
+    let outOfScope: Bool
+    let confidence: Double
+    let method: String
+}
+
+struct ChatRetrievalAttempt: Encodable {
+    enum Status: String, Encodable {
+        case succeeded
+        case failed
+        case notConnected = "not_connected"
+    }
+
+    let sourceID: String
+    let status: Status
+    let evidenceCount: Int
+    let detail: String?
+}
+
 enum ChatAPIError: LocalizedError {
     case invalidConfiguration
     case authenticationRequired
@@ -61,6 +85,15 @@ struct ChatAPIService {
         let location: String?
         let evidence: [Evidence]
         let history: [ChatAPIHistoryMessage]
+        let requiredSources: [String]
+        let retrievalAttempts: [ChatRetrievalAttempt]
+        let routingMethod: String?
+    }
+
+    private struct RouteRequest: Encodable {
+        let question: String
+        let location: String?
+        let history: [ChatAPIHistoryMessage]
     }
 
     private struct Evidence: Encodable {
@@ -88,13 +121,75 @@ struct ChatAPIService {
         _ = try? await sendWithColdStartRetry(request)
     }
 
+    func route(
+        question: String,
+        location: String?,
+        history: [ChatAPIHistoryMessage] = []
+    ) async throws -> ChatRoutingDecision {
+        guard let baseURL = AppConfiguration.chatAPIBaseURL else {
+            throw ChatAPIError.invalidConfiguration
+        }
+        guard let accessToken = await authentication.currentAccessToken() else {
+            throw ChatAPIError.authenticationRequired
+        }
+
+        let body = RouteRequest(
+            question: question,
+            location: location,
+            history: Array(history.suffix(20))
+        )
+        var request = URLRequest(url: baseURL.appendingPathComponent("route"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 75
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        request.httpBody = try encoder.encode(body)
+
+        var (data, httpResponse) = try await sendWithColdStartRetry(request)
+        if httpResponse.statusCode == 401 {
+            do {
+                try await authentication.restoreSession()
+                guard let refreshedToken = await authentication.currentAccessToken() else {
+                    throw ChatAPIError.authenticationRequired
+                }
+                request.setValue(
+                    "Bearer \(refreshedToken)",
+                    forHTTPHeaderField: "Authorization"
+                )
+                (data, httpResponse) = try await sendWithColdStartRetry(request)
+            } catch {
+                throw ChatAPIError.authenticationRequired
+            }
+        }
+        if httpResponse.statusCode == 401 {
+            throw ChatAPIError.authenticationRequired
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let detail = (try? JSONDecoder().decode(ErrorResponse.self, from: data).detail)
+                ?? "The question router is temporarily unavailable."
+            throw ChatAPIError.server(statusCode: httpResponse.statusCode, detail: detail)
+        }
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        do {
+            return try decoder.decode(ChatRoutingDecision.self, from: data)
+        } catch {
+            throw ChatAPIError.invalidResponse
+        }
+    }
+
     func ask(
         question: String,
         weather: WeatherSnapshot?,
         transit: MBTAAlertsSnapshot? = nil,
         arrivals: MBTAArrivalsSnapshot? = nil,
         journalistAnswers: [PublishedJournalistAnswer] = [],
-        history: [ChatAPIHistoryMessage] = []
+        history: [ChatAPIHistoryMessage] = [],
+        routing: ChatRoutingDecision? = nil,
+        retrievalAttempts: [ChatRetrievalAttempt] = []
     ) async throws -> ChatAPIResponse {
         guard let baseURL = AppConfiguration.chatAPIBaseURL else {
             throw ChatAPIError.invalidConfiguration
@@ -118,7 +213,10 @@ struct ChatAPIService {
             question: question,
             location: weather?.location ?? arrivals?.queryLocation ?? transit?.scope,
             evidence: evidence,
-            history: Array(history.suffix(20))
+            history: Array(history.suffix(20)),
+            requiredSources: routing?.sources ?? [],
+            retrievalAttempts: retrievalAttempts,
+            routingMethod: routing?.method
         )
 
         var request = URLRequest(url: baseURL.appendingPathComponent("ask"))
