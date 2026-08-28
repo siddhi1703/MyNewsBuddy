@@ -22,7 +22,7 @@ struct MainAppView: View {
                     Label("Home", systemImage: "house.fill")
                 }
 
-            ChatView(model: weatherModel)
+            ChatView(model: weatherModel, selectedTab: $selectedTab)
                 .tag(AppTab.chat)
                 .tabItem {
                     Label("Chat", systemImage: "bubble.left.and.bubble.right.fill")
@@ -57,6 +57,36 @@ struct MainAppView: View {
             }
         }
         .tint(Color(red: 0.34, green: 0.25, blue: 0.88))
+        .overlay {
+            GeometryReader { _ in
+                HStack(spacing: 0) {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .frame(width: 22)
+                        .gesture(
+                            DragGesture(minimumDistance: 18)
+                                .onEnded { value in
+                                    guard value.translation.width > 55 else { return }
+                                    moveTab(by: -1)
+                                }
+                        )
+
+                    Spacer(minLength: 0)
+
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .frame(width: 22)
+                        .gesture(
+                            DragGesture(minimumDistance: 18)
+                                .onEnded { value in
+                                    guard value.translation.width < -55 else { return }
+                                    moveTab(by: 1)
+                                }
+                        )
+                }
+                .ignoresSafeArea(.container, edges: .vertical)
+            }
+        }
         .task {
             weatherModel.start()
 
@@ -87,9 +117,20 @@ struct MainAppView: View {
     private var preferredFirstName: String? {
         preferredDisplayName?.split(separator: " ").first.map(String.init)
     }
+
+    private func moveTab(by offset: Int) {
+        let tabs = AppTab.allCases
+        guard let currentIndex = tabs.firstIndex(of: selectedTab) else { return }
+        let destinationIndex = currentIndex + offset
+        guard tabs.indices.contains(destinationIndex) else { return }
+
+        withAnimation(.easeInOut(duration: 0.22)) {
+            selectedTab = tabs[destinationIndex]
+        }
+    }
 }
 
-private enum AppTab: Hashable {
+private enum AppTab: Hashable, CaseIterable {
     case home
     case chat
     case timeline
@@ -877,6 +918,7 @@ private struct LocalSignalRow: View {
 
 private struct ChatView: View {
     @ObservedObject var model: WeatherViewModel
+    @Binding var selectedTab: AppTab
 
     @State private var question = ""
     @State private var isLoading = false
@@ -892,6 +934,7 @@ private struct ChatView: View {
     @State private var activeConversationID: UUID?
     @State private var pendingConversationSave: Task<UUID, Error>?
     @State private var selectedCityWeather: WeatherSnapshot?
+    @FocusState private var isQuestionFocused: Bool
     @State private var messages = [
         ChatMessage(
             role: .assistant,
@@ -936,13 +979,23 @@ private struct ChatView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        isShowingHistory = true
-                        Task { await refreshConversations() }
-                    } label: {
-                        Image(systemName: "clock.arrow.circlepath")
+                    HStack(spacing: 14) {
+                        Button {
+                            isQuestionFocused = false
+                            selectedTab = .home
+                        } label: {
+                            Image(systemName: "chevron.left")
+                        }
+                        .accessibilityLabel("Return to Home")
+
+                        Button {
+                            isShowingHistory = true
+                            Task { await refreshConversations() }
+                        } label: {
+                            Image(systemName: "clock.arrow.circlepath")
+                        }
+                        .accessibilityLabel("Chat history")
                     }
-                    .accessibilityLabel("Chat history")
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
@@ -973,6 +1026,16 @@ private struct ChatView: View {
 
                         WeatherMascot(condition: weather.condition, size: 38)
                     }
+                }
+
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button {
+                        isQuestionFocused = false
+                    } label: {
+                        Label("Done", systemImage: "keyboard.chevron.compact.down")
+                    }
+                    .accessibilityLabel("Hide keyboard")
                 }
             }
             .sheet(isPresented: $isShowingTrustedSources) {
@@ -1013,6 +1076,9 @@ private struct ChatView: View {
                 await historyRefresh
                 await responseRefresh
                 await backendWarmup
+            }
+            .onDisappear {
+                isQuestionFocused = false
             }
         }
     }
@@ -1097,6 +1163,7 @@ private struct ChatView: View {
         HStack(alignment: .bottom, spacing: 10) {
             TextField("Ask about your area…", text: $question, axis: .vertical)
                 .lineLimit(1...4)
+                .focused($isQuestionFocused)
                 .onChange(of: question) {
                     if question.count > 2_000 {
                         question = String(question.prefix(2_000))
@@ -1173,6 +1240,7 @@ private struct ChatView: View {
                 sourceURL: nil
             )
         )
+        isQuestionFocused = false
         question = ""
         isLoading = true
 
