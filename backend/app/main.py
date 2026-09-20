@@ -1,4 +1,5 @@
 from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from .auth import (
     AuthenticatedUser,
@@ -15,6 +16,17 @@ app = FastAPI(
     title="AI Hyperlocal News Companion API",
     version="0.1.0",
     description="Grounded LLM answers for the Local Companion iOS application.",
+)
+
+# Allow the Flutter web build (and other browser clients) to call the API.
+# The app authenticates with a Bearer token in the Authorization header (not
+# cookies), so a wildcard origin with credentials disabled is safe here.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
