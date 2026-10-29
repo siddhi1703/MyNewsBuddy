@@ -19,8 +19,15 @@ class AuthenticatedUser:
 
 
 def auth_is_configured() -> bool:
-    project_url, publishable_key = _supabase_settings()
-    return bool(project_url and publishable_key)
+    # Report whether Supabase was *explicitly* configured via environment
+    # variables. The service still falls back to a built-in default project so
+    # the app runs out of the box, but /health must not claim the operator
+    # configured authentication when they did not (that fallback silently points
+    # at someone else's project).
+    return bool(
+        os.getenv("SUPABASE_URL", "").strip()
+        and os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip()
+    )
 
 
 def _supabase_settings() -> tuple[str, str]:
