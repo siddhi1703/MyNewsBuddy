@@ -35,6 +35,30 @@ class WeatherVocabularyTests(unittest.TestCase):
         self.assertEqual(route.sources, ["nws"])
 
 
+class SubstringMatchTests(unittest.TestCase):
+    def test_storm_drain_is_civic_not_weather(self) -> None:
+        # "rain" must not match "d-rain"; "storm drain" is a civic question.
+        route = local_route(
+            RouteRequest(
+                question="Why does the storm drain on my street keep backing up in Boston, MA?"
+            )
+        )
+        self.assertEqual(route.category, "civic_services")
+        self.assertEqual(set(route.sources), {"boston_311", "local_news"})
+
+    def test_weather_stem_still_matches(self) -> None:
+        # The word-boundary fix must still match stems like "snowing".
+        route = local_route(RouteRequest(question="Is it snowing in Boston, MA?"))
+        self.assertEqual(route.sources, ["nws"])
+
+
+class OutOfScopeTests(unittest.TestCase):
+    def test_movie_recommendation_is_out_of_scope(self) -> None:
+        route = local_route(RouteRequest(question="What movie should I watch tonight?"))
+        self.assertTrue(route.out_of_scope)
+        self.assertEqual(route.sources, [])
+
+
 class RerankGateTests(unittest.TestCase):
     def test_gate_fixes_transit_word_collision_for_events(self) -> None:
         question = "When is the next town hall meeting in Boston, MA?"

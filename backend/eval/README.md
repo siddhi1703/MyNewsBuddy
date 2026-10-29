@@ -53,25 +53,33 @@ genuine matches is preserved.
 
 ## Measured result
 
-Running the gold set with the reranker off (baseline) vs. on:
+Running the gold set (70 questions: 54 answerable, 16 out-of-scope / small-talk
+/ needs-clarification) with the reranker off (baseline) vs. on:
 
 | | micro-P | micro-R | micro-F1 | exact-set |
 |---|---|---|---|---|
-| Baseline (reranker off) | 0.917 | 0.846 | 0.880 | 0.889 |
+| Baseline (reranker off) | 0.946 | 0.897 | 0.921 | 0.926 |
 | **Reranked** | **1.000** | **1.000** | **1.000** | **1.000** |
-| Δ reranker | **+0.083** | **+0.154** | +0.120 | +0.111 |
+| Δ reranker | **+0.054** | **+0.103** | +0.079 | +0.074 |
+
+Reranked category accuracy and behavior-kind accuracy (answerable vs.
+out-of-scope vs. small-talk vs. needs-clarification) are both **1.000**.
 
 The reranker improves **both** precision and recall here — the gate removes
 cross-category false positives (precision) *and*, by demoting a wrong winner,
 lets the correct multi-source category surface (recall). Building the harness
-first also surfaced two real routing bugs, now fixed and regression-tested:
+first also surfaced three real routing bugs, now fixed and regression-tested:
 
 1. A contraction like `hasn't` tokenized to `hasn` + `t`, and the `t → mbta`
    synonym mis-routed it to transit.
-2. Common weather vocabulary (`coat`, `jacket`, `snowing`, `degrees`, …) was
-   missing, so those questions missed `nws`.
+2. Phrase matching used raw substrings, so the weather term `rain` matched
+   `d-rain` ("storm drain") — and would also match `brain`, `terrain`,
+   `training`. Matching now anchors on a leading word boundary (so `snow` still
+   matches `snowing`).
+3. Common weather vocabulary (`coat`, `jacket`, `snowing`, `degrees`, …) and
+   some out-of-scope entertainment requests were missing.
 
-> **Honest scope.** The gold set is a small, curated set of representative
+> **Honest scope.** The gold set is a curated set of representative
 > Greater-Boston questions, so 1.000 means "no mistakes on these representative
 > cases," not a production accuracy guarantee. The point is a reproducible,
 > extensible measurement loop: add real user questions to `gold_set.py` and the

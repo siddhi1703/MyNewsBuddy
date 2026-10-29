@@ -101,6 +101,9 @@ OUT_OF_SCOPE_PATTERNS = (
     r"\bwrite (?:my|an?) (?:essay|assignment|homework)\b",
     r"\btell me a joke\b",
     r"\bshopping recommendation\b",
+    r"\bwhat (?:movie|show|series|song) should i (?:watch|see|listen to)\b",
+    r"\bwhat should i (?:watch|listen to)\b",
+    r"\b(?:movie|music|song|playlist|book) recommendation\b",
 )
 SMALL_TALK_PATTERN = re.compile(
     r"^\s*(?:hi|hello|hey|good morning|good afternoon|good evening|good night|thanks|thank you)[!.?\s]*$",
@@ -318,7 +321,10 @@ def _profile_score(normalized: str, profile: SourceProfile) -> float:
     for phrase in profile.phrases:
         normalized_phrase = _normalize(phrase)
         phrase_tokens = set(normalized_phrase.split())
-        if normalized_phrase in normalized:
+        # Match on a leading word boundary (prefix/stem) rather than a raw
+        # substring, so "snow" still matches "snowing" but "rain" no longer
+        # matches "drain" (nor "brain"/"terrain"/"training").
+        if re.search(rf"\b{re.escape(normalized_phrase)}", normalized):
             score += 2.5 if len(phrase_tokens) > 1 else 1.5
         else:
             overlap = len(question_tokens & phrase_tokens)

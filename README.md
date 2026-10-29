@@ -69,8 +69,8 @@ python -m pytest tests/ -q       # 38 unit + routing + eval tests
 ```
 
 The reranker's category-entity gate measurably improves source selection on the
-gold set (micro-precision +0.083, micro-recall +0.154 over the baseline). Full
-methodology and the honest scope note are in
+70-question gold set (micro-precision +0.054, micro-recall +0.103 over the
+baseline). Full methodology and the honest scope note are in
 [`backend/eval/README.md`](backend/eval/README.md).
 
 ## Activate authentication
