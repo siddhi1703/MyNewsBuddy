@@ -1,4 +1,5 @@
 import os
+import time
 import unittest
 from unittest.mock import patch
 
@@ -415,6 +416,24 @@ class AuthenticationTests(unittest.IsolatedAsyncioTestCase):
                 await limiter.check("user-123")
 
         self.assertEqual(context.exception.status_code, 429)
+
+    async def test_malformed_limit_falls_back_to_default(self) -> None:
+        # A non-numeric or empty env value must not 500 every request.
+        limiter = PerUserRateLimiter("CHAT_REQUESTS_PER_MINUTE", 5)
+        for bad_value in ("abc", "", "   "):
+            with patch.dict(os.environ, {"CHAT_REQUESTS_PER_MINUTE": bad_value}):
+                self.assertEqual(limiter._configured_limit(), 5)
+                await limiter.check(f"user-{bad_value!r}")
+
+    async def test_stale_user_entries_are_evicted(self) -> None:
+        limiter = PerUserRateLimiter("CHAT_REQUESTS_PER_MINUTE", 10)
+        limiter.MAX_TRACKED_USERS = 3
+        with patch.dict(os.environ, {"CHAT_REQUESTS_PER_MINUTE": "10"}):
+            # Seed stale entries, then force eviction by crossing the cap.
+            for i in range(5):
+                await limiter.check(f"user-{i}")
+            limiter._evict_stale(cutoff=time.monotonic() + 1)  # everything is stale
+        self.assertEqual(len(limiter._requests), 0)
 
 
 class ModelParsingTests(unittest.TestCase):
