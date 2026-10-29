@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass
 
+from .rerank import rerank_profile_scores
 from .schemas import ModelRoute, RouteRequest, RouteResponse
 
 
@@ -29,6 +30,8 @@ SOURCE_PROFILES = (
             "weather", "forecast", "rain", "snow", "temperature", "wind",
             "umbrella", "heat index", "air outside", "cloudy", "sunny",
             "storm", "precipitation", "how hot", "how cold",
+            "coat", "jacket", "boots", "gloves", "sunglasses", "freezing",
+            "chilly", "warm", "degrees", "humidity", "sleet", "hail", "frost",
         ),
     ),
     SourceProfile(
@@ -135,7 +138,7 @@ TOKEN_SYNONYMS = {
 }
 
 
-def local_route(request: RouteRequest) -> RouteResponse:
+def local_route(request: RouteRequest, *, rerank: bool = True) -> RouteResponse:
     question = request.question.strip()
     normalized = _normalize(question)
     location = _extract_location(question) or request.location
@@ -165,6 +168,10 @@ def local_route(request: RouteRequest) -> RouteResponse:
         key=lambda item: item[0],
         reverse=True,
     )
+    # Rerank candidates with the category-entity gate so a high-collision
+    # category (e.g. transit) cannot win on generic words alone.
+    if rerank:
+        scored = rerank_profile_scores(normalized, scored)
     best_score, best_profile = scored[0]
 
     if best_score <= 0:
@@ -297,7 +304,11 @@ def validated_model_route(model_route: ModelRoute, fallback: RouteResponse) -> R
 
 
 def _normalize(value: str) -> str:
-    words = re.findall(r"[a-z0-9]+", value.lower())
+    # Strip apostrophes before tokenizing so a contraction stays one token
+    # ("hasn't" -> "hasnt"). Splitting on the apostrophe produced a stray "t"
+    # token, which the "t" -> "mbta" synonym then mis-mapped to transit.
+    cleaned = value.lower().replace("'", "").replace("’", "")
+    words = re.findall(r"[a-z0-9]+", cleaned)
     return " ".join(TOKEN_SYNONYMS.get(word, word) for word in words)
 
 

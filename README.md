@@ -24,6 +24,12 @@ An iOS SwiftUI prototype for asking local questions and receiving concise answer
 - Supabase-authenticated `/ask` requests with per-user burst rate limiting
 - Authenticated hybrid NLP source routing using rules, semantic intent examples,
   entity/location extraction, and Gemini fallback for ambiguous questions
+- Second-pass reranker with a category-entity gate that removes cross-category
+  false positives (e.g. generic "next"/"when is" wording no longer misroutes a
+  civic event to transit) while preserving intentional multi-source checks
+- Offline routing/retrieval evaluation harness reporting Precision@K, Recall@K,
+  and F1 over a labeled gold set, with a reranker-off vs. reranker-on comparison
+  and a CI quality gate (see [`backend/eval/README.md`](backend/eval/README.md))
 - Auditable required-source and retrieval-attempt metadata on every AI request
 - Backend enforcement preventing failed or unconnected source checks from being
   saved as journalism information gaps
@@ -49,6 +55,23 @@ history. Only sufficiently specific, unanswered public-interest questions are
 also stored in `unanswered_questions` for journalist review. Answered weather or
 MBTA questions, personal recommendations, ambiguous questions, and missing-source
 engineering issues are never labeled as journalism gaps.
+
+## Measure routing quality
+
+Retrieval relevance — did the router pick the right trusted sources? — is
+measured offline, no API key or network required:
+
+```bash
+cd backend
+python -m eval.run_eval          # Precision@K / Recall@K / F1, baseline vs. reranked
+python -m eval.run_eval --check  # CI gate: non-zero exit on regression
+python -m pytest tests/ -q       # 38 unit + routing + eval tests
+```
+
+The reranker's category-entity gate measurably improves source selection on the
+gold set (micro-precision +0.083, micro-recall +0.154 over the baseline). Full
+methodology and the honest scope note are in
+[`backend/eval/README.md`](backend/eval/README.md).
 
 ## Activate authentication
 
