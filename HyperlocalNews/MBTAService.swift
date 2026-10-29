@@ -316,15 +316,19 @@ struct MBTAService {
         }
 
         let included = decoded.included ?? []
+        // Use uniquingKeysWith rather than uniqueKeysWithValues: a duplicate id
+        // in the feed would otherwise trap at runtime. Keep the first occurrence.
         let routes = Dictionary(
-            uniqueKeysWithValues: included
+            included
                 .filter { $0.type == "route" }
-                .map { ($0.id, $0.attributes) }
+                .map { ($0.id, $0.attributes) },
+            uniquingKeysWith: { first, _ in first }
         )
         let trips = Dictionary(
-            uniqueKeysWithValues: included
+            included
                 .filter { $0.type == "trip" }
-                .map { ($0.id, $0.attributes) }
+                .map { ($0.id, $0.attributes) },
+            uniquingKeysWith: { first, _ in first }
         )
         let formatter = ISO8601DateFormatter()
         return decoded.data.compactMap { resource in
