@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass
 
+from .rerank import rerank_profile_scores
 from .schemas import ModelRoute, RouteRequest, RouteResponse
 
 
@@ -29,6 +30,8 @@ SOURCE_PROFILES = (
             "weather", "forecast", "rain", "snow", "temperature", "wind",
             "umbrella", "heat index", "air outside", "cloudy", "sunny",
             "storm", "precipitation", "how hot", "how cold",
+            "coat", "jacket", "boots", "gloves", "sunglasses", "freezing",
+            "chilly", "warm", "degrees", "humidity", "sleet", "hail", "frost",
         ),
     ),
     SourceProfile(
@@ -98,6 +101,9 @@ OUT_OF_SCOPE_PATTERNS = (
     r"\bwrite (?:my|an?) (?:essay|assignment|homework)\b",
     r"\btell me a joke\b",
     r"\bshopping recommendation\b",
+    r"\bwhat (?:movie|show|series|song) should i (?:watch|see|listen to)\b",
+    r"\bwhat should i (?:watch|listen to)\b",
+    r"\b(?:movie|music|song|playlist|book) recommendation\b",
 )
 SMALL_TALK_PATTERN = re.compile(
     r"^\s*(?:hi|hello|hey|good morning|good afternoon|good evening|good night|thanks|thank you)[!.?\s]*$",
@@ -135,7 +141,7 @@ TOKEN_SYNONYMS = {
 }
 
 
-def local_route(request: RouteRequest) -> RouteResponse:
+def local_route(request: RouteRequest, *, rerank: bool = True) -> RouteResponse:
     question = request.question.strip()
     normalized = _normalize(question)
     location = _extract_location(question) or request.location
@@ -165,6 +171,10 @@ def local_route(request: RouteRequest) -> RouteResponse:
         key=lambda item: item[0],
         reverse=True,
     )
+    # Rerank candidates with the category-entity gate so a high-collision
+    # category (e.g. transit) cannot win on generic words alone.
+    if rerank:
+        scored = rerank_profile_scores(normalized, scored)
     best_score, best_profile = scored[0]
 
     if best_score <= 0:
@@ -297,7 +307,11 @@ def validated_model_route(model_route: ModelRoute, fallback: RouteResponse) -> R
 
 
 def _normalize(value: str) -> str:
-    words = re.findall(r"[a-z0-9]+", value.lower())
+    # Strip apostrophes before tokenizing so a contraction stays one token
+    # ("hasn't" -> "hasnt"). Splitting on the apostrophe produced a stray "t"
+    # token, which the "t" -> "mbta" synonym then mis-mapped to transit.
+    cleaned = value.lower().replace("'", "").replace("’", "")
+    words = re.findall(r"[a-z0-9]+", cleaned)
     return " ".join(TOKEN_SYNONYMS.get(word, word) for word in words)
 
 
@@ -307,7 +321,10 @@ def _profile_score(normalized: str, profile: SourceProfile) -> float:
     for phrase in profile.phrases:
         normalized_phrase = _normalize(phrase)
         phrase_tokens = set(normalized_phrase.split())
-        if normalized_phrase in normalized:
+        # Match on a leading word boundary (prefix/stem) rather than a raw
+        # substring, so "snow" still matches "snowing" but "rain" no longer
+        # matches "drain" (nor "brain"/"terrain"/"training").
+        if re.search(rf"\b{re.escape(normalized_phrase)}", normalized):
             score += 2.5 if len(phrase_tokens) > 1 else 1.5
         else:
             overlap = len(question_tokens & phrase_tokens)

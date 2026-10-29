@@ -42,3 +42,25 @@ The checked-in iOS configuration uses the hosted Render service. To test this
 local server, temporarily set `chatAPIBaseURL` in
 `HyperlocalNews/AppConfiguration.swift` to `http://127.0.0.1:8000`. A physical
 iPhone needs the HTTPS deployment or the Mac's reachable LAN address.
+
+## Tests
+
+```bash
+cd backend
+python -m pytest tests/ -q
+```
+
+## Routing & retrieval evaluation
+
+Source-routing quality is measured with an offline harness (no API key or
+network) that reports Precision@K / Recall@K / F1 over a labeled gold set, and
+compares the reranker off vs. on:
+
+```bash
+cd backend
+python -m eval.run_eval          # report
+python -m eval.run_eval --check  # CI quality gate (non-zero exit on regression)
+```
+
+See [`eval/README.md`](eval/README.md) for the methodology, the reranker's
+category-entity gate, and the measured precision/recall gains.
