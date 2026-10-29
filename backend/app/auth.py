@@ -124,17 +124,29 @@ async def require_authenticated_user(
 
 
 class PerUserRateLimiter:
+    # Guard against unbounded growth: distinct user ids accumulate one deque each
+    # and never return. Above this many tracked users, sweep out the stale ones.
+    MAX_TRACKED_USERS = 50_000
+
     def __init__(self, environment_key: str, default_limit: int) -> None:
         self.environment_key = environment_key
         self.default_limit = default_limit
         self._requests: dict[str, deque[float]] = defaultdict(deque)
         self._lock = asyncio.Lock()
 
+    def _configured_limit(self) -> int:
+        # A misconfigured env value (empty or non-numeric) must not take the
+        # whole endpoint down with a ValueError on every request.
+        raw = os.getenv(self.environment_key)
+        if raw is None:
+            return self.default_limit
+        try:
+            return max(1, int(raw.strip()))
+        except ValueError:
+            return self.default_limit
+
     async def check(self, user_id: str) -> None:
-        limit = max(
-            1,
-            int(os.getenv(self.environment_key, str(self.default_limit))),
-        )
+        limit = self._configured_limit()
         window_seconds = 60.0
         now = time.monotonic()
 
@@ -155,6 +167,17 @@ class PerUserRateLimiter:
                 )
 
             requests.append(now)
+            if len(self._requests) > self.MAX_TRACKED_USERS:
+                self._evict_stale(now - window_seconds)
+
+    def _evict_stale(self, cutoff: float) -> None:
+        stale = [
+            user_id
+            for user_id, timestamps in self._requests.items()
+            if not timestamps or timestamps[-1] <= cutoff
+        ]
+        for user_id in stale:
+            del self._requests[user_id]
 
 
 chat_rate_limiter = PerUserRateLimiter("CHAT_REQUESTS_PER_MINUTE", 10)

@@ -78,7 +78,13 @@ private final class AuthenticationViewModel: ObservableObject {
             accountEmail = await service.storedEmail()
             accountDisplayName = await service.storedDisplayName()
             state = .authenticated
+        } catch is URLError {
+            // Transient connectivity failure on launch: keep the stored session
+            // so the user is not forced to sign in again, and let them retry.
+            state = .signedOut
         } catch {
+            // Supabase actively rejected the stored session (expired/invalid
+            // refresh token): clear it so a stale token is not reused.
             await service.clearSession()
             state = .signedOut
         }
