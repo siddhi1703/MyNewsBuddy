@@ -623,7 +623,10 @@ private final class TransitMapViewModel: ObservableObject {
             do {
                 stops = try await service.nearbyStops(at: originCoordinate)
             } catch {
+                // The route itself is ready; only nearby-stop loading failed.
+                // Surface it instead of silently showing an empty stop list.
                 stops = []
+                errorMessage = "I planned your route, but couldn’t load nearby stops right now."
             }
             isLoadingStops = false
         } catch {
