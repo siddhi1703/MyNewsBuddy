@@ -134,7 +134,7 @@ enum JournalistDashboardError: LocalizedError {
 }
 
 actor JournalistGapService {
-    private let authentication = SupabaseAuthService()
+    private let authentication = SupabaseAuthService.shared
 
     func hasJournalistAccess() async -> Bool {
         do {
@@ -277,7 +277,7 @@ actor JournalistGapService {
 }
 
 actor CommunityResponseService {
-    private let authentication = SupabaseAuthService()
+    private let authentication = SupabaseAuthService.shared
 
     func notifications() async throws -> [CommunityJournalistResponse] {
         let data = try await callRPC(

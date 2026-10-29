@@ -51,7 +51,7 @@ private final class AuthenticationViewModel: ObservableObject {
     @Published private(set) var accountEmail: String?
     @Published private(set) var accountDisplayName: String?
 
-    private let service = SupabaseAuthService()
+    private let service = SupabaseAuthService.shared
     private let googleWebSession = GoogleWebAuthenticationSession()
     private var didAttemptRestore = false
 

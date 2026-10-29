@@ -70,7 +70,7 @@ enum ChatHistoryError: LocalizedError {
 }
 
 actor ChatHistoryService {
-    private let authentication = SupabaseAuthService()
+    private let authentication = SupabaseAuthService.shared
 
     func conversations() async throws -> [ChatConversation] {
         let data = try await request(
