@@ -13,7 +13,20 @@ struct ChatAPIResponse: Decodable {
 
     struct Citation: Decodable {
         let title: String
-        let url: URL
+        let url: URL?
+
+        enum CodingKeys: String, CodingKey {
+            case title
+            case url
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            title = try container.decode(String.self, forKey: .title)
+            // Tolerate a blank or malformed citation URL instead of failing the
+            // entire answer decode over one bad link.
+            url = try? container.decodeIfPresent(URL.self, forKey: .url)
+        }
     }
 
     let answer: String
@@ -78,7 +91,7 @@ enum ChatAPIError: LocalizedError {
 }
 
 struct ChatAPIService {
-    private let authentication = SupabaseAuthService()
+    private let authentication = SupabaseAuthService.shared
 
     private struct AskRequest: Encodable {
         let question: String

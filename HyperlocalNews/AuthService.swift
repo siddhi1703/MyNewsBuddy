@@ -25,6 +25,11 @@ enum AuthenticationError: LocalizedError {
 }
 
 actor SupabaseAuthService {
+    // Shared instance so refresh-token rotation is serialized across all
+    // callers. Separate instances do not mutually exclude, so concurrent 401s
+    // could each POST the same refresh token and race on rotation.
+    static let shared = SupabaseAuthService()
+
     func hasStoredSession() -> Bool {
         SessionStore.read(.refreshToken) != nil
     }
@@ -168,8 +173,11 @@ actor SupabaseAuthService {
             refreshToken: refreshToken,
             user: nil
         )
-        try SessionStore.save(session)
 
+        // Fetch the user BEFORE persisting the session. If the fetch or decode
+        // fails, nothing is stored, so the caller stays cleanly signed out
+        // instead of leaving a session in the Keychain that silently restores
+        // on the next launch while the UI shows signed-out.
         let userData = try await send(
             path: "auth/v1/user",
             method: "GET",
@@ -177,6 +185,8 @@ actor SupabaseAuthService {
             body: nil
         )
         let user = try JSONDecoder().decode(CurrentUserResponse.self, from: userData)
+
+        try SessionStore.save(session)
         try saveIdentity(user)
         return user.email
     }
@@ -323,7 +333,7 @@ enum InformationGapError: LocalizedError {
 }
 
 actor InformationGapService {
-    private let authentication = SupabaseAuthService()
+    private let authentication = SupabaseAuthService.shared
 
     func logUnansweredQuestion(
         question: String,
