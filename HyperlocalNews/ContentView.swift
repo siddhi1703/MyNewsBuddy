@@ -1761,9 +1761,17 @@ private struct ChatView: View {
         let words = rawCandidate
             .components(separatedBy: separators)
             .filter { word in
-                !word.isEmpty
-                    && Int(word) == nil
-                    && !ignoredWords.contains(word.lowercased())
+                guard !word.isEmpty, !ignoredWords.contains(word.lowercased()) else {
+                    return false
+                }
+                // Keep a 5-digit US ZIP code as a location token; drop other
+                // stray numbers (e.g. the "7" in "next 7 days"). Previously any
+                // numeric token was discarded, so "weather in 02115" silently
+                // fell back to the current location.
+                if Int(word) != nil {
+                    return word.count == 5 && word.allSatisfy(\.isNumber)
+                }
+                return true
             }
 
         guard !words.isEmpty, words.count <= 5 else { return nil }

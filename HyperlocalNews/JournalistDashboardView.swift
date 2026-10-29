@@ -435,10 +435,15 @@ private final class JournalistDashboardModel: ObservableObject {
                 // Keep the inbox usable while an older database is waiting for
                 // the summary migration. The RPC becomes the authoritative
                 // distinct-user count as soon as that migration is installed.
+                // Summing per-cluster distinct-asker counts double-counts anyone
+                // who asked across multiple clusters, inflating the impact
+                // metric. Without raw asker ids we cannot dedupe here, so use
+                // the largest single-cluster count as a conservative lower bound
+                // until the summary RPC provides the authoritative distinct count.
                 summary = JournalistGapSummary(
                     topicCount: loadedClusters.count,
                     questionCount: loadedClusters.reduce(0) { $0 + $1.questionCount },
-                    uniqueAskerCount: loadedClusters.reduce(0) { $0 + $1.uniqueAskerCount }
+                    uniqueAskerCount: loadedClusters.map(\.uniqueAskerCount).max() ?? 0
                 )
             }
         } catch {

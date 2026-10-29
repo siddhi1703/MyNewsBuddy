@@ -173,8 +173,11 @@ actor SupabaseAuthService {
             refreshToken: refreshToken,
             user: nil
         )
-        try SessionStore.save(session)
 
+        // Fetch the user BEFORE persisting the session. If the fetch or decode
+        // fails, nothing is stored, so the caller stays cleanly signed out
+        // instead of leaving a session in the Keychain that silently restores
+        // on the next launch while the UI shows signed-out.
         let userData = try await send(
             path: "auth/v1/user",
             method: "GET",
@@ -182,6 +185,8 @@ actor SupabaseAuthService {
             body: nil
         )
         let user = try JSONDecoder().decode(CurrentUserResponse.self, from: userData)
+
+        try SessionStore.save(session)
         try saveIdentity(user)
         return user.email
     }
