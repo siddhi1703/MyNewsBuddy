@@ -232,6 +232,19 @@ class GroundingTests(unittest.TestCase):
         self.assertIn("authentication_configured", response.json())
         self.assertNotIn("api_key", response.json())
 
+    def test_health_auth_configured_reflects_explicit_env(self) -> None:
+        from app.auth import auth_is_configured
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SUPABASE_URL", None)
+            os.environ.pop("SUPABASE_PUBLISHABLE_KEY", None)
+            self.assertFalse(auth_is_configured())
+        with patch.dict(
+            os.environ,
+            {"SUPABASE_URL": "https://x.supabase.co", "SUPABASE_PUBLISHABLE_KEY": "k"},
+        ):
+            self.assertTrue(auth_is_configured())
+
     def test_ask_requires_a_signed_in_user(self) -> None:
         app.dependency_overrides.pop(authorize_chat_request, None)
         response = TestClient(app).post(
