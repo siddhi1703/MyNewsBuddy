@@ -1,5 +1,14 @@
+import os
 import unittest
+from unittest.mock import patch
 
+from app.embeddings import (
+    LABEL_ROUTING,
+    PROTOTYPES,
+    EmbeddingRouter,
+    _cosine,
+    _nearest_label,
+)
 from app.router import local_route
 from app.schemas import RouteRequest
 from eval.metrics import Counts, aggregate, counts_for
@@ -135,6 +144,34 @@ class EvalHarnessTests(unittest.TestCase):
         self.assertGreaterEqual(reranked["retrieval"].micro_precision, 0.90)
         self.assertGreaterEqual(reranked["retrieval"].micro_recall, 0.90)
         self.assertGreaterEqual(reranked["kind_accuracy"], 0.90)
+
+
+class EmbeddingRouterTests(unittest.IsolatedAsyncioTestCase):
+    def test_cosine_bounds(self) -> None:
+        self.assertAlmostEqual(_cosine([1.0, 0.0], [1.0, 0.0]), 1.0)
+        self.assertAlmostEqual(_cosine([1.0, 0.0], [0.0, 1.0]), 0.0)
+        self.assertEqual(_cosine([0.0, 0.0], [1.0, 1.0]), 0.0)
+
+    def test_nearest_label_picks_closest_prototype(self) -> None:
+        prototypes = [
+            ("weather", [1.0, 0.0]),
+            ("transit_alert", [0.0, 1.0]),
+        ]
+        label, score = _nearest_label([0.9, 0.1], prototypes)
+        self.assertEqual(label, "weather")
+        self.assertGreater(score, 0.9)
+
+    def test_every_prototype_label_has_routing(self) -> None:
+        for label in PROTOTYPES:
+            self.assertIn(label, LABEL_ROUTING)
+
+    async def test_route_is_none_without_api_key(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("GEMINI_API_KEY", None)
+            router = EmbeddingRouter()
+            self.assertFalse(router.is_configured)
+            result = await router.route(RouteRequest(question="Will it rain?"))
+            self.assertIsNone(result)
 
 
 if __name__ == "__main__":

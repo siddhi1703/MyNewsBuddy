@@ -15,6 +15,7 @@ measured rather than assumed.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import sys
 
@@ -81,6 +82,56 @@ def evaluate(*, rerank: bool) -> dict:
     }
 
 
+async def evaluate_embeddings() -> dict | None:
+    """Route the gold set through the Gemini embeddings router.
+
+    Returns None when no GEMINI_API_KEY is configured (so the benchmark is
+    skipped offline instead of failing).
+    """
+    from app.embeddings import EmbeddingRouter
+
+    router = EmbeddingRouter()
+    if not router.is_configured:
+        return None
+
+    retrieval_pairs: list[tuple[set[str], set[str]]] = []
+    category_correct = 0
+    category_total = 0
+    kind_correct = 0
+    misroutes: list[dict] = []
+
+    for case in GOLD_CASES:
+        route = await router.route(
+            RouteRequest(question=case.question, location=case.location)
+        )
+        if route is None:
+            continue
+        predicted = set(route.sources)
+        if predicted_kind(route) == case.kind:
+            kind_correct += 1
+        if case.kind == "answerable":
+            expected = set(case.expected_sources)
+            retrieval_pairs.append((predicted, expected))
+            category_total += 1
+            if route.category == case.expected_category:
+                category_correct += 1
+            if predicted != expected:
+                misroutes.append(
+                    {
+                        "question": case.question,
+                        "expected": sorted(expected),
+                        "predicted": sorted(predicted),
+                    }
+                )
+
+    return {
+        "retrieval": aggregate(retrieval_pairs),
+        "category_accuracy": accuracy(category_correct, category_total),
+        "kind_accuracy": accuracy(kind_correct, len(GOLD_CASES)),
+        "misroutes": misroutes,
+    }
+
+
 def _fmt(report: RetrievalReport) -> str:
     return (
         f"  micro  P={report.micro_precision:.3f}  R={report.micro_recall:.3f}  "
@@ -127,10 +178,39 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="emit metrics as JSON")
     parser.add_argument("--check", action="store_true",
                         help="exit non-zero if reranked metrics fall below thresholds")
+    parser.add_argument("--embeddings", action="store_true",
+                        help="also benchmark the Gemini embeddings router "
+                             "(requires GEMINI_API_KEY)")
     args = parser.parse_args()
 
     baseline = evaluate(rerank=False)
     reranked = evaluate(rerank=True)
+
+    if args.embeddings and not args.json:
+        embeddings = asyncio.run(evaluate_embeddings())
+        print_report(baseline, reranked)
+        if embeddings is None:
+            print("Embeddings router: skipped (set GEMINI_API_KEY to benchmark).\n")
+        else:
+            er = embeddings["retrieval"]
+            print("Retrieval relevance — EMBEDDINGS (semantic router)")
+            print(_fmt(er))
+            dp = er.micro_precision - reranked["retrieval"].micro_precision
+            dr = er.micro_recall - reranked["retrieval"].micro_recall
+            print(f"\nEmbeddings vs reranked rules: "
+                  f"micro-precision {dp:+.3f}, micro-recall {dr:+.3f}")
+            print(f"Category accuracy:      {embeddings['category_accuracy']:.3f}")
+            print(f"Behavior-kind accuracy: {embeddings['kind_accuracy']:.3f}")
+            if embeddings["misroutes"]:
+                print("\nEmbeddings source mismatches:")
+                for item in embeddings["misroutes"]:
+                    print(f"  - {item['question']}")
+                    print(f"      expected={item['expected']}  "
+                          f"predicted={item['predicted']}")
+            print()
+        if args.check:
+            return _run_check(reranked)
+        return 0
 
     if args.json:
         r = reranked["retrieval"]
@@ -155,18 +235,23 @@ def main() -> int:
         print_report(baseline, reranked)
 
     if args.check:
-        r = reranked["retrieval"]
-        failures = []
-        if r.micro_precision < MIN_MICRO_PRECISION:
-            failures.append(f"micro-precision {r.micro_precision:.3f} < {MIN_MICRO_PRECISION}")
-        if r.micro_recall < MIN_MICRO_RECALL:
-            failures.append(f"micro-recall {r.micro_recall:.3f} < {MIN_MICRO_RECALL}")
-        if reranked["kind_accuracy"] < MIN_KIND_ACCURACY:
-            failures.append(f"kind-accuracy {reranked['kind_accuracy']:.3f} < {MIN_KIND_ACCURACY}")
-        if failures:
-            print("CHECK FAILED: " + "; ".join(failures), file=sys.stderr)
-            return 1
-        print("CHECK PASSED")
+        return _run_check(reranked)
+    return 0
+
+
+def _run_check(reranked: dict) -> int:
+    r = reranked["retrieval"]
+    failures = []
+    if r.micro_precision < MIN_MICRO_PRECISION:
+        failures.append(f"micro-precision {r.micro_precision:.3f} < {MIN_MICRO_PRECISION}")
+    if r.micro_recall < MIN_MICRO_RECALL:
+        failures.append(f"micro-recall {r.micro_recall:.3f} < {MIN_MICRO_RECALL}")
+    if reranked["kind_accuracy"] < MIN_KIND_ACCURACY:
+        failures.append(f"kind-accuracy {reranked['kind_accuracy']:.3f} < {MIN_KIND_ACCURACY}")
+    if failures:
+        print("CHECK FAILED: " + "; ".join(failures), file=sys.stderr)
+        return 1
+    print("CHECK PASSED")
     return 0
 
 
