@@ -7,6 +7,7 @@ from .auth import (
     authorize_chat_request,
     authorize_routing_request,
 )
+from .embeddings import EmbeddingRouter
 from .gemini import GeminiService, GeminiServiceError
 from .router import local_route, should_use_gemini
 from .schemas import AskRequest, AskResponse, RouteRequest, RouteResponse
@@ -91,6 +92,13 @@ async def route_question(
     _user: AuthenticatedUser = Depends(authorize_routing_request),
 ) -> RouteResponse:
     route = local_route(request)
+    # Prefer the semantic embeddings router when configured; it understands
+    # paraphrases the keyword rules miss. It returns None when embeddings are
+    # unavailable or error, in which case we keep the rule-based route (with the
+    # Gemini fallback for genuinely ambiguous questions).
+    semantic = await EmbeddingRouter().route(request)
+    if semantic is not None:
+        return semantic
     if should_use_gemini(route):
         return await GeminiService().route(request, route)
     return route
